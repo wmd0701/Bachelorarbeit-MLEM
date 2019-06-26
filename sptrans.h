@@ -164,9 +164,10 @@ void scan_kernel(int *in, int *out, int N, bool inclusive, int base) {
 }
 
 void scan_omp(int *in, int *out, int N, bool inclusive, int base) {
-    int p = 1;
+    // int p = 1;
 #pragma omp parallel
-    p = omp_get_num_threads();
+    // p = omp_get_num_threads();
+    omp_get_num_threads();
     int nblocks = NBLOCKS(N, _SCAN_BSIZE);
     if (nblocks <= 2) {
         scan_kernel(in, out, N, inclusive, base);
@@ -201,7 +202,7 @@ void sptrans_scanTrans(int  m,
                        iT  *cscColPtr,
                        vT  *cscVal)
 {
-    int i, j, k, ii, jj, procs; 
+    int i, j, ii, jj, procs; //, k; 
 
 #pragma omp parallel
     procs = omp_get_num_threads();
@@ -291,7 +292,7 @@ void sptrans_scanTrans(int  m,
         {
             int offset = 0;
             int tid = omp_get_thread_num();
-            int inter_start = tid * n; 
+            // int inter_start = tid * n; 
             int intra_start = size * tid;
             int len = size;
 
@@ -315,7 +316,7 @@ void sptrans_scanTrans(int  m,
         {
             int offset = 0;
             int tid = omp_get_thread_num();
-            int inter_start = tid * n; 
+            // int inter_start = tid * n; 
             int intra_start = size * tid;
             int len = size;
 

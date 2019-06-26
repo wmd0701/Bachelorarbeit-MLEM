@@ -12,7 +12,8 @@
 #include "time.h"
 #include "sptrans.h"
 
-#define TransposeMatrixUsingCPU true
+// #define TransposeMatrixUsingCPU true
+#define Iterations 300
 
 void csr_format_for_cuda(const Csr4Matrix& matrix, float* csrVal, int* csrRowInd, int* csrColInd){   
     int index = 0;
@@ -73,37 +74,70 @@ int halfMatrix(int *csr_Rows, int nnzs, int rows){
     int i = 0;
     int halfnnzs = nnzs / 2;
     for(; i <= rows; i++)
-        if(csr_Rows[i] >= halfnnzs)
+        if(csr_Rows[i] > halfnnzs)
             break;
     return i;
 }
 
-void mlem(int *csr_Rows, float *csr_Vals, int *csr_Cols, int *g, float *norm, float *f, int rows, int cols, int nnzs, float init, int iterations){
+void mlem(  int *csr_Rows, float *csr_Vals, int *csr_Cols, 
+            int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, 
+            int *g, float *norm, float *f, int rows, int cols, int nnzs){
     clock_t start = clock();
+    
+    // halve the matrix
+    int halfrows1 = halfMatrix(csr_Rows, nnzs, rows);
+    int halfrows2 = rows - halfrows1;
+    int halfnnzs1 = csr_Rows[halfrows1];
+    int halfnnzs2 = nnzs - halfnnzs1;
+    int offset = csr_Rows[halfrows1];
+    printf("First  half matrix contains %d rows and %d nnzs\n", halfrows1, halfnnzs1);
+    printf("Second half matrix contains %d rows and %d nnzs\n", halfrows2, halfnnzs2);
+    // adjust row array for the second half matrix
+    // TODO: accelerate this adjustment with GPU
+    for(int i = halfrows1+1; i <= rows; i++)
+        csr_Rows[i] -= offset;
+
+    // halve the transposed matrix
+    int halfrows1_trans = halfMatrix(csr_Rows_Trans, nnzs, cols);
+    int halfrows2_trans = cols - halfrows1_trans;
+    int halfnnzs1_trans = csr_Rows_Trans[halfrows1_trans];
+    int halfnnzs2_trans = nnzs - halfnnzs1_trans;
+    int offset_trans = csr_Rows_Trans[halfrows1_trans];
+    printf("First  half transposed matrix contains %d rows and %d nnzs\n", halfrows1_trans, halfnnzs1_trans);
+    printf("Second half transposed matrix contains %d rows and %d nnzs\n", halfrows2_trans, halfnnzs2_trans);
+    // adjust row array for the second half matrix
+    // TODO: accelerate this adjustment with GPU
+    for(int i = halfrows1_trans+1; i <= cols; i++)
+        csr_Rows_Trans[i] -= offset_trans;
+
+
     // device variables
     int *cuda_Rows, *cuda_Cols, *cuda_Rows_Trans, *cuda_Cols_Trans, *cuda_g;
     float *cuda_Vals, *cuda_Vals_Trans, *cuda_norm, *cuda_bwproj, *cuda_temp, *cuda_f;
 
+
     // allocate device storage
     printf("    Begin: Allocate GPU Storage\n");
-    cudaMalloc((void**)&cuda_Rows, sizeof(int)*(rows + 1));
-    cudaMalloc((void**)&cuda_Cols, sizeof(int)*nnzs);
-    cudaMalloc((void**)&cuda_Vals, sizeof(float)*nnzs);
+    int rows_init = halfrows1 > halfrows2 ? halfrows1 : halfrows2;
+    int nnzs_init = halfnnzs1 > halfnnzs2 ? halfnnzs1 : halfnnzs2;
+    int rows_init_trans = halfrows1_trans > halfrows2_trans ? halfrows1_trans : halfrows2_trans;
+    int nnzs_init_trans = halfnnzs1_trans > halfnnzs2_trans ? halfnnzs1_trans : halfnnzs2_trans;
+
+    cudaMalloc((void**)&cuda_Rows, sizeof(int)*(rows_init + 1));
+    cudaMalloc((void**)&cuda_Cols, sizeof(int)*nnzs_init);
+    cudaMalloc((void**)&cuda_Vals, sizeof(float)*nnzs_init);
+    cudaMalloc((void**)&cuda_Rows_Trans, sizeof(int)*(rows_init_trans + 1));
+    cudaMalloc((void**)&cuda_Cols_Trans, sizeof(int)*nnzs_init_trans);
+    cudaMalloc((void**)&cuda_Vals_Trans, sizeof(float)*nnzs_init_trans);
+    cudaMalloc((void**)&cuda_f, sizeof(float)*cols);
     cudaMalloc((void**)&cuda_g, sizeof(int)*rows);
     cudaMalloc((void**)&cuda_norm, sizeof(float)*cols);
     cudaMalloc((void**)&cuda_bwproj, sizeof(float)*cols);
     cudaMalloc((void**)&cuda_temp, sizeof(float)*rows);
-    cudaMalloc((void**)&cuda_Rows_Trans, sizeof(int)*(cols + 1));
-    cudaMalloc((void**)&cuda_Cols_Trans, sizeof(int)*nnzs);
-    cudaMalloc((void**)&cuda_Vals_Trans, sizeof(float)*nnzs);
-    cudaMalloc((void**)&cuda_f, sizeof(float)*cols);
     printf("    End  : Allocate GPU Storage\n");
 
     // value initialization
     printf("    Begin: GPU Storage Initialization\n");
-    cudaMemcpy(cuda_Rows, csr_Rows, sizeof(int)*(rows + 1), cudaMemcpyHostToDevice);
-    cudaMemcpy(cuda_Cols, csr_Cols, sizeof(int)* nnzs, cudaMemcpyHostToDevice);
-    cudaMemcpy(cuda_Vals, csr_Vals, sizeof(float)* nnzs, cudaMemcpyHostToDevice);
     cudaMemcpy(cuda_g, g, sizeof(int)* rows, cudaMemcpyHostToDevice);
     cudaMemcpy(cuda_norm, norm, sizeof(float)* cols, cudaMemcpyHostToDevice);
     cudaMemset(cuda_bwproj, 0, sizeof(float)*cols);
@@ -116,66 +150,85 @@ void mlem(int *csr_Rows, float *csr_Vals, int *csr_Cols, int *g, float *norm, fl
     cudaMemset(cuda_Vals_Trans, 0, sizeof(float)*nnzs);
     printf("    End  : GPU Storage Initialization\n");
 
-    // transpose matrix, currently using CPU
-    printf("    Begin: CSR to CSC\n");
-    if(!TransposeMatrixUsingCPU){
-        // transpose matrix using GPU
-        transposeCSR(cuda_Rows, cuda_Cols, cuda_Vals, cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, rows, cols, nnzs);
-    }
-    else{
-        // transpose matrix using CPU
-        int *csr_Rows_Trans = (int*) calloc (cols+1,sizeof(int));
-        int *csr_Cols_Trans = (int*) calloc (nnzs,sizeof(int));
-        float *csr_Vals_Trans = (float*) calloc (nnzs,sizeof(float));
-        sptrans_scanTrans<int, float>(rows, cols, nnzs, csr_Rows, csr_Cols, csr_Vals, csr_Cols_Trans, csr_Rows_Trans, csr_Vals_Trans);
-        cudaMemcpy(cuda_Rows_Trans, csr_Rows_Trans, sizeof(int)*(cols + 1), cudaMemcpyHostToDevice);
-        cudaMemcpy(cuda_Cols_Trans, csr_Cols_Trans, sizeof(int)* nnzs, cudaMemcpyHostToDevice);
-        cudaMemcpy(cuda_Vals_Trans, csr_Vals_Trans, sizeof(float)* nnzs, cudaMemcpyHostToDevice);        
-        free(csr_Rows_Trans);
-        free(csr_Cols_Trans);
-        free(csr_Vals_Trans);
-    }
-    printf("    End  : CSR to CSC\n");
-
+    
     // Determine grid size and section size (block size is set to 1024 by default)
     int blocksize = 1024;
     int gridsize_correl = ceil((double)rows / blocksize);
     int gridsize_update = ceil((double)cols / blocksize);
-    int items_fwproj = rows + nnzs;
-    int items_bwproj = cols + nnzs;
-    int gridsize_fwproj = ceil(sqrt((double)items_fwproj / blocksize));
-    int gridsize_bwproj = ceil(sqrt((double)items_bwproj / blocksize));
-    int secsize_fwproj = ceil((double)items_fwproj / (blocksize * gridsize_fwproj));
-    int secsize_bwproj = ceil((double)items_bwproj / (blocksize * gridsize_bwproj));
+    int items_fwproj1 = halfrows1 + halfnnzs1;
+    int items_fwproj2 = halfrows2 + halfnnzs1;
+    int items_bwproj1 = halfrows1_trans + halfnnzs1_trans;
+    int items_bwproj2 = halfrows2_trans + halfnnzs2_trans;
+    int gridsize_fwproj1 = ceil(sqrt((double)items_fwproj1 / blocksize));
+    int gridsize_fwproj2 = ceil(sqrt((double)items_fwproj2 / blocksize));
+    int gridsize_bwproj1 = ceil(sqrt((double)items_bwproj1 / blocksize));
+    int gridsize_bwproj2 = ceil(sqrt((double)items_bwproj2 / blocksize));
+    int secsize_fwproj1 = ceil((double)items_fwproj1 / (blocksize * gridsize_fwproj1));
+    int secsize_fwproj2 = ceil((double)items_fwproj2 / (blocksize * gridsize_fwproj2));
+    int secsize_bwproj1 = ceil((double)items_bwproj1 / (blocksize * gridsize_bwproj1));
+    int secsize_bwproj2 = ceil((double)items_bwproj2 / (blocksize * gridsize_bwproj2));
 
+    
     // iterations
-    printf("    Begin: Iterations\n");
+    printf("    Begin: Iterations %d\n", Iterations);
     clock_t startIter = clock();
-    for(int i = 0; i < iterations; i++){
-        calcFwProj <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Vals, cuda_Cols, cuda_f, cuda_temp, secsize_fwproj, rows, nnzs);
+    for(int i = 0; i < Iterations; i++){
+        // forward projection for first half matrix
+        csr_Rows[halfrows1] = offset;
+        cudaMemcpy(cuda_Rows, csr_Rows, sizeof(int)*(halfrows1 + 1), cudaMemcpyHostToDevice);
+        cudaMemcpy(cuda_Cols, csr_Cols, sizeof(int)* halfnnzs1, cudaMemcpyHostToDevice);
+        cudaMemcpy(cuda_Vals, csr_Vals, sizeof(float)* halfnnzs1, cudaMemcpyHostToDevice);
+        calcFwProj <<< gridsize_fwproj1, blocksize >>> (cuda_Rows, cuda_Vals, cuda_Cols, cuda_f, cuda_temp, secsize_fwproj1, halfrows1, halfnnzs1);
+
+        // forward projection for second half matrix
+        csr_Rows[halfrows1] = 0;
+        cudaMemcpy(cuda_Rows, csr_Rows+halfrows1, sizeof(int)*(halfrows2 + 1), cudaMemcpyHostToDevice);
+        cudaMemcpy(cuda_Cols, csr_Cols+halfnnzs1, sizeof(int)* halfnnzs2, cudaMemcpyHostToDevice);
+        cudaMemcpy(cuda_Vals, csr_Vals+halfnnzs1, sizeof(float)* halfnnzs2, cudaMemcpyHostToDevice);
+        calcFwProj <<< gridsize_fwproj2, blocksize >>> (cuda_Rows, cuda_Vals, cuda_Cols, cuda_f, cuda_temp+halfrows1, secsize_fwproj2, halfrows2, halfnnzs2);
+        
+        // correlation
         calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
-        calcBkProj <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Vals_Trans, cuda_Cols_Trans, cuda_temp, cuda_bwproj, secsize_bwproj, cols, nnzs);
+
+        // backward projection for first half transposed matrix
+        csr_Rows_Trans[halfrows1_trans] = offset_trans;
+        cudaMemcpy(cuda_Rows_Trans, csr_Rows_Trans, sizeof(int)*(halfrows1_trans + 1), cudaMemcpyHostToDevice);
+        cudaMemcpy(cuda_Cols_Trans, csr_Cols_Trans, sizeof(int)* halfnnzs1_trans, cudaMemcpyHostToDevice);
+        cudaMemcpy(cuda_Vals_Trans, csr_Vals_Trans, sizeof(float)* halfnnzs1_trans, cudaMemcpyHostToDevice);
+        calcBkProj <<< gridsize_bwproj1, blocksize >>> (cuda_Rows_Trans, cuda_Vals_Trans, cuda_Cols_Trans, cuda_temp, cuda_bwproj, secsize_bwproj1, halfrows1_trans, halfnnzs1_trans);
+
+        // backward projection for second half transposed matrix
+        csr_Rows_Trans[halfrows1_trans] = 0;
+        cudaMemcpy(cuda_Rows_Trans, csr_Rows_Trans+halfrows1_trans, sizeof(int)*(halfrows2_trans + 1), cudaMemcpyHostToDevice);
+        cudaMemcpy(cuda_Cols_Trans, csr_Cols_Trans+halfnnzs1_trans, sizeof(int)* halfnnzs2_trans, cudaMemcpyHostToDevice);
+        cudaMemcpy(cuda_Vals_Trans, csr_Vals_Trans+halfnnzs1_trans, sizeof(float)* halfnnzs2_trans, cudaMemcpyHostToDevice);
+        calcBkProj <<< gridsize_bwproj2, blocksize >>> (cuda_Rows_Trans, cuda_Vals_Trans, cuda_Cols_Trans, cuda_temp, cuda_bwproj+halfrows1_trans, secsize_bwproj2, halfrows2_trans, halfnnzs2_trans);
+        
+        // update
         calcUpdate <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
+        
+        // clear temp vector
         clearTemp  <<< gridsize_correl, blocksize >>> (cuda_temp, rows);
     }
     clock_t endIter = clock();
-    printf("    End  : Iterations\n\n");
+    printf("    End  : Iterations %d\n\n", Iterations);
     
     // Result is copied to f
     cudaMemcpy(f, cuda_f, sizeof(float)*cols, cudaMemcpyDeviceToHost);
 
     // free all memory
-    cudaFree(cuda_Rows);
-    cudaFree(cuda_Cols);
-    cudaFree(cuda_Vals);
-    cudaFree(cuda_g);
-    cudaFree(cuda_norm);
-    cudaFree(cuda_f);
-    cudaFree(cuda_bwproj);
-    cudaFree(cuda_temp);
-    cudaFree(cuda_Rows_Trans);
-    cudaFree(cuda_Cols_Trans);
-    cudaFree(cuda_Vals_Trans);
+    if(cuda_Rows) cudaFree(cuda_Rows);
+    if(cuda_Cols) cudaFree(cuda_Cols);
+    if(cuda_Vals) cudaFree(cuda_Vals);
+    if(cuda_Rows_Trans) cudaFree(cuda_Rows_Trans);
+    if(cuda_Cols_Trans) cudaFree(cuda_Cols_Trans);
+    if(cuda_Vals_Trans) cudaFree(cuda_Vals_Trans);
+    if(cuda_g) cudaFree(cuda_g);
+    if(cuda_norm) cudaFree(cuda_norm);
+    if(cuda_f) cudaFree(cuda_f);
+    if(cuda_bwproj) cudaFree(cuda_bwproj);
+    if(cuda_temp) cudaFree(cuda_temp);
+    
 
     clock_t end = clock();
     double totaltime = ((double) (end - start)) / CLOCKS_PER_SEC;
@@ -191,8 +244,6 @@ int main(){
     int *csr_Rows, *csr_Cols, *g, rows, cols, nnzs, sum_g = 0;
     float *csr_Vals, *norm, sum_norm = 0.0f;
 
-    // times of iterations
-    int iterations = 500;
 
     // read matrix
     printf("Begin: Read Matrix\n");
@@ -229,60 +280,47 @@ int main(){
     float init = sum_g / sum_norm;
     printf("Sum of norms: %f\n", sum_norm);
     printf("Sum of g    : %d\n", sum_g);
-    printf("Initial     : %f\n\n", init);
+    printf("Initial f   : %f\n\n", init);
 
-    // half the matrix
-    int halfrows1 = halfMatrix(csr_Rows, nnzs, rows);
-    int halfrows2 = rows - halfrows1;
-    int halfnnzs1 = csr_Rows[halfrows1];
-    int halfnnzs2 = nnzs - halfnnzs1;
-    printf("First  half matrix contains %d rows and %d nnzs\n", halfrows1, halfnnzs1);
-    printf("Second half matrix contains %d rows and %d nnzs\n", halfrows2, halfnnzs2);
 
-    float *f1 = (float*)malloc(sizeof(float)*cols);
-    float *f2 = (float*)malloc(sizeof(float)*cols);
-    for(int i = 0; i < cols; i++){
-        f1[i] = init;
-        f2[i] = init;
-    }
+    // transpose matrix
+    printf("Begin: Transpose Matrix\n");
+    // transpose matrix using GPU
+    // transposeCSR(cuda_Rows, cuda_Cols, cuda_Vals, cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, rows, cols, nnzs);
     
-    // run mlem algorithm for first  half matrix
-    printf("\n\n******************************\n");
-    printf("Begin: MLEM for 1st Half Matrix\n");
-    mlem(csr_Rows, csr_Vals, csr_Cols, g, norm, f1, halfrows1, cols, halfnnzs1, init, iterations);
-    printf("End  : MLEM for 1st Half Matrix\n");
+    // transpose matrix using CPU
+    int *csr_Rows_Trans = (int*) calloc (cols+1,sizeof(int));
+    int *csr_Cols_Trans = (int*) calloc (nnzs,sizeof(int));
+    float *csr_Vals_Trans = (float*) calloc (nnzs,sizeof(float));
+    sptrans_scanTrans<int, float>(rows, cols, nnzs, csr_Rows, csr_Cols, csr_Vals, csr_Cols_Trans, csr_Rows_Trans, csr_Vals_Trans);
+    printf("End  : Transpose Matrix\n");
 
-    // adjust row array for the second half matrix
-    // TODO: accelerate this adjustment with GPU
-    int offset = csr_Rows[halfrows1];
-    for(int i = halfrows1; i <= rows; i++)
-        csr_Rows[i] -= offset;
-
-    // run mlem algorithm for second half matrix
-    printf("\n\n******************************\n");
-    printf("Begin: MLEM for 2nd Half Matrix\n");
-    mlem(csr_Rows + halfrows1, csr_Vals + halfnnzs1, csr_Cols + halfnnzs1, g + halfrows1, norm, f2, halfrows2, cols, halfnnzs2, init, iterations);
-    printf("End  : MLEM for 2nd Half Matrix\n");
-
-    // average two solutions f1 and f2
     float *f = (float*)malloc(sizeof(float)*cols);
     for(int i = 0; i < cols; i++)
-        f[i] = (f1[i] + f2[i]) / 2.0f;
+        f[i] = init;
+    
+    // run mlem algorithm matrix
+    printf("\n\n******************************\n");
+    printf("Begin: Run MLEM for %d iterations\n", Iterations);
+    mlem(csr_Rows, csr_Vals, csr_Cols, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs);
+    printf("End  : Run MLEM for %d iterations\n", Iterations);
+    printf("******************************\n");
 
     // sum up all elements in the solution f
     float sum = 0;
     for(int i = 0; i < cols; i++)
         sum += f[i];
     
-    printf("\nSum  : %f\n", sum);
+    printf("\nSum f: %f\n\n", sum);
     
     if (csr_Rows) free(csr_Rows);
     if (csr_Cols) free(csr_Cols);
     if (csr_Vals) free(csr_Vals);
+    if (csr_Rows_Trans) free(csr_Rows_Trans);
+    if (csr_Cols_Trans) free(csr_Cols_Trans);
+    if (csr_Vals_Trans) free(csr_Vals_Trans);
     // if (g) free(g);
     // if (norm) free(norm);
-    if (f1) free(f1);
-    if (f2) free(f2);
     if (f) free(f);
 
     return 0;

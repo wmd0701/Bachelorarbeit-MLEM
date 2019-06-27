@@ -16,9 +16,12 @@
 // #define TransposeMatrixUsingCPU true
 #define Iterations 300
 
-// 0: naive mlem
-// 1: mlem using nccl
+// 0: naive mlem     
+// other ints: mlem using nccl
 #define MLEM_Version 1
+
+// 0: Quadro P6000
+// 1: Tesla K20c
 #define Naive_Device 0
 
 void csr_format_for_cuda(const Csr4Matrix& matrix, float* csrVal, int* csrRowInd, int* csrColInd){   
@@ -372,8 +375,10 @@ void mlem_naive(    int *csr_Rows, int *csr_Cols, float *csr_Vals,
                     int *g, float *norm, float *f, int rows, int cols, int nnzs){
     
     // 1: P6000
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, Naive_Device);	
     cudaSetDevice(Naive_Device);
-    printf("    \nRunning naive MLEM on CUDA device %d (P6000)\n\n", Naive_Device);
+    printf("    \nRunning naive MLEM on CUDA device %d (%s)\n\n", Naive_Device, prop.name);
     
     clock_t start = clock();
     printf("    Begin: Initialization\n");
@@ -513,7 +518,7 @@ void mlem_naive(    int *csr_Rows, int *csr_Cols, float *csr_Vals,
     clock_t iterEnd = clock();
     printf("    End  : Iterations %d\n", Iterations);
     double itertime = ((double) (iterEnd - iterStart)) / CLOCKS_PER_SEC;
-    printf("    Elapsed time for iterations: %f\n", itertime);
+    printf("    Elapsed time for iterations: %f\n\n", itertime);
 
     // Result is copied to f
     cudaMemcpy(f, cuda_f, sizeof(float)*cols, cudaMemcpyDeviceToHost);

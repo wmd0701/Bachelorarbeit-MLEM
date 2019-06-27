@@ -8,7 +8,7 @@ MPICXX	= mpiCC
 
 CFLAGS  = -O3 -g -std=c++11 -D_MWAITXINTRIN_H_INCLUDED -D_FORCE_INLINES -D__STRICT_ANSI__ $(BOOST_INC) 
 #LFLAGS = -lomp
-CUFLAGS =  $(BOOST_INC) -I./helper_files_common -lboost_filesystem -lboost_system -lcublas -lcusparse -lnvidia-ml  -L$(BOOST_LIBDIR)
+CUFLAGS =  $(BOOST_INC) -I./helper_files_common -lboost_filesystem -lboost_system -lcublas -lcusparse -lnvidia-ml  -L$(BOOST_LIBDIR) -I/usr/local/nccl/include -L/usr/local/nccl/lib -l nccl
 HELPER_FILES_COMMON = helper_files_common
 
 SOURCES = csr4matrix.cpp scannerconfig.cpp

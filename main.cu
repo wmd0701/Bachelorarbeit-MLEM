@@ -362,6 +362,8 @@ void mlem_naive(    int *csr_Rows, int *csr_Cols, float *csr_Vals,
                     int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, 
                     int *g, float *norm, float *f, int rows, int cols, int nnzs){
     
+    // 1: P6000
+    cudaSetDevice(1);
     clock_t start = clock();
     
     // halve the matrix

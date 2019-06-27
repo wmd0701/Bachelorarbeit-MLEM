@@ -6,9 +6,9 @@
 
 __global__ void calcFwProj(int *csr_Row, float *csr_Val, int *csr_Col, float *f, float *fwproj, int secSize, int rows, int nnzs);
 __global__ void calcCorrel(int *g, float *fwproj, int rows);
-__global__ void calcBkProj(int *csr_Row, float *csr_Val, int *csr_Col, float *correl, float *bwproj, int secSize, int cols, int nnzs);
+__global__ void calcBwProj(int *csr_Row, float *csr_Val, int *csr_Col, float *correl, float *bwproj, int secSize, int cols, int nnzs);
 __global__ void calcUpdate(float *f, float *norm, float *bwproj, int cols);
-__global__ void clearTemp(float *temp, int rows);
+__global__ void calcUpdateInPlace(float *f, float *norm, float *bwproj, int cols);
 
 
 

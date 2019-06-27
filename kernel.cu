@@ -20,7 +20,6 @@ __global__ void calcFwProj(	int *csr_Row, float *csr_Val, int *csr_Col, float *f
 	// !!! (gridsize x blocksize - 1) x sectionsize  <  rows + nnzs
 	
 	SpMV_start(csr_Row, csr_Val, csr_Col, f, fwproj, secSize, rows, nnzs);
-	__syncthreads();
 }
 
 
@@ -38,8 +37,6 @@ __global__ void calcCorrel(int *g, float *fwproj, int rows) {
 	if (index < rows) 
 		if(fwproj[index] != 0.0f)
 			fwproj[index] =  g[index] / fwproj[index];
-	
-	__syncthreads();
 }
 
 
@@ -54,25 +51,45 @@ __global__ void calcCorrel(int *g, float *fwproj, int rows) {
 	@param cols:			number of rows of transposed matrix (columns of original matrix)
 	@param nnzs:			number of nnzs (equals to length of val/col array)
 */
-__global__ void calcBkProj(	int *csr_Row, float *csr_Val, int *csr_Col, float *correl, float *bwproj,
+__global__ void calcBwProj(	int *csr_Row, float *csr_Val, int *csr_Col, float *correl, float *bwproj,
 							int secSize, int cols, int nnzs){
 
 	// !!!  gridsize x blocksize x sectionsize		>= cols + nnzs
 	// !!! (gridsize x blocksize - 1) x sectionsize <  cols + nnzs
 	
 	SpMV_start(csr_Row, csr_Val, csr_Col, correl, bwproj, secSize, cols, nnzs);
-	__syncthreads();
 }
 
 
 /*
-	brief: calculate update, output saved in f in-place
-	@param f:			input / output array
-	@param norm:			norm array
-	@param bwproj:		result of backward projection, will be set to 0 after update
-	@param cols:			number of columns of original matrix
+	brief: calculate update, output saved in bwproj, for mlem nccl
+	@param f:			input array
+	@param norm:		norm array
+	@param bwproj:		result of backward projection / output array
+	@param cols:		number of columns of original matrix
 */
 __global__ void calcUpdate(float *f, float *norm, float *bwproj, int cols) {
+	
+	// !!!gridsize x blocksize >= cols
+
+	int index = blockIdx.x * blockDim.x + threadIdx.x;
+	if (index < cols) {
+		if(norm[index] == 0)
+			bwproj[index] = f[index] * bwproj[index];
+		else
+			bwproj[index] = f[index] * bwproj[index] / norm[index];
+	}
+}
+
+
+/*
+	brief: calculate update, output saved in f in-place, for mlem naive
+	@param f:			input array / output array
+	@param norm:		norm array
+	@param bwproj:		result of backward projection
+	@param cols:		number of columns of original matrix
+*/
+__global__ void calcUpdateInPlace(float *f, float *norm, float *bwproj, int cols) {
 	
 	// !!!gridsize x blocksize >= cols
 
@@ -82,27 +99,11 @@ __global__ void calcUpdate(float *f, float *norm, float *bwproj, int cols) {
 			f[index] = f[index] * bwproj[index];
 		else
 			f[index] = f[index] * bwproj[index] / norm[index];
-
+		
 		bwproj[index] = 0.0f;
 	}
-	__syncthreads();
 }
 
-
-/*
-	brief: clear temp array, should be called at the end of each iteration
-	@param temp: array to be cleared
-	@param rows: number of rows
-*/
-__global__ void clearTemp(float *temp, int rows) {
-	
-	// !!! gridsize x blocksize >= rows
-
-	int index = blockIdx.x * blockDim.x + threadIdx.x;
-	if (index < rows)
-		temp[index] = 0.0f;
-	__syncthreads();
-}
 
 /*
 	brief: find start coordinate for each section and call SpMV_work

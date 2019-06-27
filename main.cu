@@ -11,14 +11,19 @@
 #include "vector.hpp"
 #include "time.h"
 #include "sptrans.h"
+#include "nccl.h"
 
 // #define TransposeMatrixUsingCPU true
 #define Iterations 300
 
+// 0: naive mlem
+// 1: mlem using nccl
+#define MLEM_Version 0
+
 void csr_format_for_cuda(const Csr4Matrix& matrix, float* csrVal, int* csrRowInd, int* csrColInd){   
     int index = 0;
     csrRowInd[index] = 0;
-// pragma omp parallel for schedule (static)
+    #pragma omp parallel for schedule (static)
     for (int row = 0; row < matrix.rows(); ++row) {
         csrRowInd[row + 1] = csrRowInd[row] + (int)matrix.elementsInRow(row);
 	
@@ -74,14 +79,289 @@ int halfMatrix(int *csr_Rows, int nnzs, int rows){
     int i = 0;
     int halfnnzs = nnzs / 2;
     for(; i <= rows; i++)
-        if(csr_Rows[i] > halfnnzs)
+        if(csr_Rows[i] >= halfnnzs)
             break;
     return i;
 }
 
-void mlem(  int *csr_Rows, float *csr_Vals, int *csr_Cols, 
-            int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, 
-            int *g, float *norm, float *f, int rows, int cols, int nnzs){
+/* a general version of halfMatrix: partition matrix into device_numbers parts, corresponding rows are saved in the array segments
+   start row of segment i: segments[i]
+    end  row of segment i: segments[i+1]
+    number of rows in segment i: segments[i+1] - segments[i] (saved in segment_rows)
+    number of nnzs in segment i: csr_Rows[segments[i+1]] - csr_Rows[segments[i]] (saved in segment_nnzs)
+    offset when copying from host to device: csr_Rows[segments[i]] (saved in offsets)
+*/
+void partitionMatrix(int *csr_Rows, int nnzs, int rows, int device_numbers, int *segments, int *segment_rows, int *segment_nnzs, int *offsets){
+    segments[0] = 0;
+    segments[device_numbers] = rows;
+    int i = 0;
+    int segment_nnzs = nnzs / deviceNumbers;
+    for(int segment = 1; segment < device_numbers; segment++){
+        for(; i <= rows; i++)
+            if(csr_Rows[i] >= segment_nnzs * segment)
+                break;
+        segments[segment] = i;
+    }
+    for(int segment = 0; segment < device_numbers; segment++){
+        segment_rows[segment] = segments[segment+1] - segments[segment];
+        segment_nnzs[segment] = csr_Rows[segments[segment+1]] - csr_Rows[segments[segment]];
+        offsets[segment] = csr_Rows[segments[segment]];
+    }
+}
+
+void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
+                int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, 
+                int *g, float *norm, float *f, int rows, int cols, int nnzs){
+    
+    int device_numbers;
+    cudaGetDeviceCount(&device_numbers);
+    if(device_numbers < 2){
+        printf("Warning! Number of capable GPUs less than 2!\n");
+        return;
+    }
+
+    clock_t start = clock();
+
+    // partition matrix
+    int *segments = (int*)malloc((device_numbers+1)*sizeof(int));
+    int *segment_rows = (int*)malloc(device_numbers*sizeof(int));
+    int *segment_nnzs = (int*)malloc(device_numbers*sizeof(int));
+    int *offsets = (int*)malloc(device_numbers*sizeof(int));
+    partitionMatrix(csr_Rows, nnzs, rows, device_numbers, segments, segment_rows, segment_nnzs, offsets);
+
+
+    // partition transposed matrix
+    int *segments_trans = (int*)malloc((device_numbers+1)*sizeof(int));
+    int *segment_rows_trans = (int*)malloc(device_numbers*sizeof(int));
+    int *segment_nnzs_trans = (int*)malloc(device_numbers*sizeof(int));
+    int *offsets_trans = (int*)malloc(device_numbers*sizeof(int));
+    partitionMatrix(csr_Rows_Trans, nnzs, cols, device_numbers, segments_trans, segment_rows_trans, segment_nnzs_trans, offsets_trans);
+    
+    
+    // NCCL elements
+    ncclComm_t *comms = (ncclComm_t*)malloc(device_numbers * sizeof(ncclComm_t));;
+    cudaStream_t *streams = (cudaStream_t*)malloc(device_numbers * sizeof(cudaStream_t));
+    int *devices = (int*)malloc(device_numbers * sizeof(int));    
+
+
+    // device variables
+    int **cuda_Rows = (int**)malloc(device_numbers*sizeof(int*));
+    int **cuda_Cols = (int**)malloc(device_numbers*sizeof(int*)); 
+    int **cuda_Rows_Trans = (int**)malloc(device_numbers*sizeof(int*));
+    int **cuda_Cols_Trans = (int**)malloc(device_numbers*sizeof(int*));
+    int **cuda_g = (int**)malloc(device_numbers*sizeof(int*));
+    float **cuda_Vals = (float**)malloc(device_numbers*sizeof(float*));
+    float **cuda_Vals_Trans = (float**)malloc(device_numbers*sizeof(float*));
+    float **cuda_norm = (float**)malloc(device_numbers*sizeof(float*))
+    float **cuda_bwproj = (float**)malloc(device_numbers*sizeof(float*));
+    float **cuda_temp = (float**)malloc(device_numbers*sizeof(float*));
+    float **cuda_f = (float**)malloc(device_numbers*sizeof(float*));
+
+
+    // initialization
+    printf("    Begin: Initialization\n");
+    int blocksize = 1024;   // unique blocksize for all kernel calls
+    int *gridsize_fwproj = (int*)malloc(device_numbers*sizeof(int));
+    int *gridsize_correl = (int*)malloc(device_numbers*sizeof(int));
+    int *gridsize_bwproj = (int*)malloc(device_numbers*sizeof(int));
+    int *gridsize_update = (int*)malloc(device_numbers*sizeof(int));
+    int *secsize_fwproj = (int*)malloc(device_numbers*sizeof(int));
+    int *secsize_bwproj = (int*)malloc(device_numbers*sizeof(int));
+    for(int i = 0; i < device_numbers; i++){
+        cudaSetDevice(i);
+        cudaStreamCreate(streams+i);
+        devices[i] = i;
+
+        cudaMalloc((void**)&cuda_Rows[i], sizeof(int)*(segment_rows[i] + 1));
+        cudaMalloc((void**)&cuda_Cols[i], sizeof(int)*segment_nnzs[i]);
+        cudaMalloc((void**)&cuda_Vals[i], sizeof(float)*segment_nnzs[i]);
+        cudaMalloc((void**)&cuda_Rows_Trans[i], sizeof(int)*(segment_rows_trans[i] + 1));
+        cudaMalloc((void**)&cuda_Cols_Trans[i], sizeof(int)*segment_nnzs_trans[i]);
+        cudaMalloc((void**)&cuda_Vals_Trans[i], sizeof(float)*segment_nnzs_trans[i]);
+        cudaMalloc((void**)&cuda_f[i], sizeof(float)*cols);
+        cudaMalloc((void**)&cuda_bwproj[i], sizeof(float)*cols);
+        cudaMalloc((void**)&cuda_temp[i], sizeof(float)*rows);
+        cudaMalloc((void**)&cuda_g[i], sizeof(int)*segment_rows[i]);
+        cudaMalloc((void**)&cuda_norm[i], sizeof(float)*segment_rows_trans[i]);
+
+        
+        // copy matrix from host to devices
+        for(int j = segments[i]; j <= segments[i+1]; j++ )
+            csr_Rows[j] -= offsets[i];
+        cudaMemcpy(cuda_Rows[i], csr_Rows+segments[i], sizeof(int)*(segment_rows[i] + 1), cudaMemcpyHostToDevice);
+        csr_Rows[segments[i+1]] += offsets[i];
+        cudaMemcpy(cuda_Cols[i], csr_Cols+offsets[i], sizeof(int)*segment_nnzs[i], cudaMemcpyHostToDevice);
+        cudaMemcpy(cuda_Vals[i], csr_Vals+offsets[i], sizeof(float)*segment_nnzs[i], cudaMemcpyHostToDevice);
+        
+        // copy transposed matrix from host to devices
+        for(int j = segments_trans[i]; j <= segments_trans[i+1]; j++ )
+            csr_Rows_Trans[j] -= offsets_trans[i];
+        cudaMemcpy(cuda_Rows_Trans[i], csr_Rows_Trans+segments_trans[i], sizeof(int)*(segment_rows_trans[i] + 1), cudaMemcpyHostToDevice);
+        csr_Rows_Trans[segments_trans[i+1]] += offsets_trans[i];
+        cudaMemcpy(cuda_Cols_Trans[i], csr_Cols_Trans+offsets_trans[i], sizeof(int)*segment_nnzs_trans[i], cudaMemcpyHostToDevice);
+        cudaMemcpy(cuda_Vals_Trans[i], csr_Vals_Trans+offsets_trans[i], sizeof(float)*segment_nnzs_trans[i], cudaMemcpyHostToDevice);
+        
+        // copy other vectors from host to devices
+        cudaMemcpy(cuda_g[i], g+segments[i], sizeof(int)*segment_rows[i], cudaMemcpyHostToDevice);
+        cudaMemcpy(cuda_norm[i], norm+segments_trans[i], sizeof(float)*segment_rows_trans[i], cudaMemcpyHostToDevice);
+        cudaMemset(cuda_bwproj[i], 0, sizeof(float)*cols);
+        cudaMemset(cuda_temp[i], 0, sizeof(float)*rows);
+        cudaMemcpy(cuda_f[i], f, sizeof(float)*cols, cudaMemcpyHostToDevice);
+        
+        // determine grid size for each step when calling CUDA kernels
+        gridsize_correl[i] = ceil((double)segment_rows[i] / blocksize);
+        gridsize_update[i] = ceil((double)segment_rows_trans[i] / blocksize);
+        int items_fwproj = segment_rows[i] + segment_nnzs[i];
+        int items_bwproj = segment_rows_trans[i] + segment_nnzs_trans[i];
+        gridsize_fwproj[i] = ceil(sqrt((double)items_fwproj / blocksize));
+        gridsize_bwproj[i] = ceil(sqrt((double)items_bwproj / blocksize));
+        // determine section size for foward projection and backward projection
+        secsize_fwproj[i] = ceil((double)items_fwproj / (blocksize * gridsize_fwproj[i]));
+        secsize_bwproj[i] = ceil((double)items_bwproj / (blocksize * gridsize_bwproj[i]));
+        
+    }
+    printf("    End  : Initialization\n");
+
+
+    // NCCL initialization
+    ncclCommInitAll(comms, device_numbers, devices);
+
+
+    // iterations
+    printf("    Begin: Iterations %d\n", Iterations);
+    clock_t startIter = clock();
+    for(int iter = 0; iter < Iterations; iter++){
+        
+        // forward projection
+        for(int i = 0; i < device_numbers; i++){
+            cudaSetDevice(i);
+            calcFwProj <<< gridsize_fwproj[i], blocksize >>> (  cuda_Rows[i], cuda_Vals[i], cuda_Cols[i], cuda_f[i], 
+                                                                cuda_temp[i] + segments[i], secsize_fwproj[i], segment_rows[i], segment_nnzs[i]);
+        }
+
+        // correlation
+        for(int i = 0; i < device_numbers; i++){
+            cudaSetDevice(i);
+            calcCorrel <<< gridsize_correl[i], blocksize >>> (cuda_g[i], cuda_temp[i]+segments[i], segment_rows[i]);
+        }
+
+        // sum up cuda_temp over devices
+        for (int i = 0; i < device_numbers; ++i) {
+            cudaSetDevice(i);
+            cudaStreamSynchronize(streams[i]);
+        }
+        ncclGroupStart();
+        for (int i = 0; i < device_numbers; i++)
+            ncclAllReduce((const void*)cuda_temp[i], (void*)cuda_temp[i], rows, ncclFloat, ncclSum, comms[i], streams[i]);
+        ncclGroupEnd();
+        for (int i = 0; i < device_numbers; ++i) {
+            cudaSetDevice(i);
+            cudaStreamSynchronize(streams[i]);
+        }
+
+        // backward projection
+        for(int i = 0; i < device_numbers; i++){
+            cudaSetDevice(i);
+            calcBwProj <<< gridsize_bwproj[i], blocksize >>> (  cuda_Rows_Trans[i], cuda_Vals_Trans[i], cuda_Cols_Trans[i], cuda_temp[i], 
+                                                                cuda_bwproj[i] + segments_trans[i], secsize_bwproj[i], segment_rows_trans[i], segment_nnzs_trans[i]);
+        }
+
+        // update, for mlem nccl calcUpdate should be used, followd by clearing bwproj using cudamemset
+        for(int i = 0; i < device_numbers; i++){
+            cudaSetDevice(i);
+            calcUpdate <<< gridsize_update[i], blocksize >>> (cuda_f[i] + segments_trans[i], cuda_norm[i], cuda_bwproj[i] + segments_trans[i], segment_rows_trans[i]);
+        }
+
+        // sum up cuda_bwproj over devices and save in cuda_f
+        for (int i = 0; i < device_numbers; ++i) {
+            cudaSetDevice(i);
+            cudaStreamSynchronize(streams[i]);
+        }
+        ncclGroupStart();
+        for (int i = 0; i < device_numbers; i++)
+            ncclAllReduce((const void*)cuda_bwproj[i], (void*)cuda_f[i], cols, ncclFloat, ncclSum, comms[i], streams[i]);
+        ncclGroupEnd();
+        for (int i = 0; i < device_numbers; ++i) {
+            cudaSetDevice(i);
+            cudaStreamSynchronize(streams[i]);
+        }
+
+        // clear cuda_bwproj
+        for(int i = 0; i < device_numbers; i++){
+            cudaSetDevice(i);
+            cudaMemset(cuda_bwproj[i], 0, sizeof(float)*cols);
+        }
+
+        // clear cuda_temp
+        for(int i = 0; i < device_numbers; i++){
+            cudaSetDevice(i);
+            cudaMemset(cuda_temp[i], 0, sizeof(float)*rows);
+        }
+    }
+    clock_t endIter = clock();
+    printf("    End  : Iterations %d\n\n", Iterations);
+    double itertime = ((double) (endIter - startIter)) / CLOCKS_PER_SEC;
+    printf("    Time for the MLEM iterations: %f\n\n", itertime);
+
+
+    // Result is copied to f from device 0, actually now all devices hold the same result
+    cudaSetDevice(0);
+    cudaMemcpy(f, cuda_f[0], sizeof(float)*cols, cudaMemcpyDeviceToHost);
+
+    // free all memory
+    for(int i = 0; i < device_numbers; i++){
+        cudaSetDevice(i);
+        ncclCommDestroy(comms[i]);
+        if(cuda_Rows[i]) cudaFree(cuda_Rows[i]);
+        if(cuda_Cols[i]) cudaFree(cuda_Cols[i]);
+        if(cuda_Rows_Trans[i]) cudaFree(cuda_Rows_Trans[i]);
+        if(cuda_Cols_Trans[i]) cudaFree(cuda_Cols_Trans[i]);
+        if(cuda_g[i]) cudaFree(cuda_g[i]);
+        if(cuda_Vals[i]) cudaFree(cuda_Vals[i]);
+        if(cuda_Vals_Trans[i]) cudaFree(cuda_Vals_Trans[i]);
+        if(cuda_norm[i]) cudaFree(cuda_norm[i]);
+        if(cuda_bwproj[i]) cudaFree(cuda_bwproj[i]);
+        if(cuda_temp[i]) cudaFree(cuda_temp[i]);
+        if(cuda_f[i]) cudaFree(cuda_f[i]);
+    }
+    if(segments) free(segments);
+    if(segment_rows) free(segment_rows);
+    if(segment_nnzs) free(segment_nnzs);
+    if(offsets) free(offsets);
+    if(segments_trans) free(segments_trans);
+    if(segment_rows_trans) free(segment_rows_trans);
+    if(segment_nnzs_trans) free(segment_nnzs_trans);
+    if(offsets_trans) free(offsets_trans);
+    if(comms) free(comms);
+    if(streams) free(streams);
+    if(devices) free(devices);
+    if(cuda_Rows) free(cuda_Rows);
+    if(cuda_Cols) free(cuda_Cols);
+    if(cuda_Rows_Trans) free(cuda_Rows_Trans);
+    if(cuda_Cols_Trans) free(cuda_Cols_Trans);
+    if(cuda_g) free(cuda_g);
+    if(cuda_Vals) free(cuda_Vals);
+    if(cuda_Vals_Trans) free(cuda_Vals_Trans);
+    if(cuda_norm) free(cuda_norm);
+    if(cuda_bwproj) free(cuda_bwproj);
+    if(cuda_temp) free(cuda_temp);
+    if(cuda_f) free(cuda_f);
+    if(gridsize_fwproj) free(gridsize_fwproj);
+    if(gridsize_correl) free(gridsize_correl);
+    if(gridsize_bwproj) free(gridsize_bwproj);
+    if(gridsize_update) free(gridsize_update);
+    if(secsize_fwproj) free(secsize_fwproj);
+    if(secsize_bwproj) free(secsize_bwproj);
+    
+
+    clock_t end = clock();
+    double totaltime = ((double) (end - start)) / CLOCKS_PER_SEC;
+    printf("    Time for the whole MLEM function: %f\n", totaltime);
+}
+void mlem_naive(    int *csr_Rows, int *csr_Cols, float *csr_Vals, 
+                    int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, 
+                    int *g, float *norm, float *f, int rows, int cols, int nnzs){
+    
     clock_t start = clock();
     
     // halve the matrix
@@ -195,24 +475,27 @@ void mlem(  int *csr_Rows, float *csr_Vals, int *csr_Cols,
         cudaMemcpy(cuda_Rows_Trans, csr_Rows_Trans, sizeof(int)*(halfrows1_trans + 1), cudaMemcpyHostToDevice);
         cudaMemcpy(cuda_Cols_Trans, csr_Cols_Trans, sizeof(int)* halfnnzs1_trans, cudaMemcpyHostToDevice);
         cudaMemcpy(cuda_Vals_Trans, csr_Vals_Trans, sizeof(float)* halfnnzs1_trans, cudaMemcpyHostToDevice);
-        calcBkProj <<< gridsize_bwproj1, blocksize >>> (cuda_Rows_Trans, cuda_Vals_Trans, cuda_Cols_Trans, cuda_temp, cuda_bwproj, secsize_bwproj1, halfrows1_trans, halfnnzs1_trans);
+        calcBwProj <<< gridsize_bwproj1, blocksize >>> (cuda_Rows_Trans, cuda_Vals_Trans, cuda_Cols_Trans, cuda_temp, cuda_bwproj, secsize_bwproj1, halfrows1_trans, halfnnzs1_trans);
 
         // backward projection for second half transposed matrix
         csr_Rows_Trans[halfrows1_trans] = 0;
         cudaMemcpy(cuda_Rows_Trans, csr_Rows_Trans+halfrows1_trans, sizeof(int)*(halfrows2_trans + 1), cudaMemcpyHostToDevice);
         cudaMemcpy(cuda_Cols_Trans, csr_Cols_Trans+halfnnzs1_trans, sizeof(int)* halfnnzs2_trans, cudaMemcpyHostToDevice);
         cudaMemcpy(cuda_Vals_Trans, csr_Vals_Trans+halfnnzs1_trans, sizeof(float)* halfnnzs2_trans, cudaMemcpyHostToDevice);
-        calcBkProj <<< gridsize_bwproj2, blocksize >>> (cuda_Rows_Trans, cuda_Vals_Trans, cuda_Cols_Trans, cuda_temp, cuda_bwproj+halfrows1_trans, secsize_bwproj2, halfrows2_trans, halfnnzs2_trans);
+        calcBwProj <<< gridsize_bwproj2, blocksize >>> (cuda_Rows_Trans, cuda_Vals_Trans, cuda_Cols_Trans, cuda_temp, cuda_bwproj+halfrows1_trans, secsize_bwproj2, halfrows2_trans, halfnnzs2_trans);
         
-        // update
-        calcUpdate <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
+        // update, for mlem naive calcUpdateAndClearBwproj should be used
+        calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
         
-        // clear temp vector
-        clearTemp  <<< gridsize_correl, blocksize >>> (cuda_temp, rows);
+        // clear cuda_temp and cuda_bwproj
+        cudaMemset(cuda_temp,   0, sizeof(float)*rows);
+        cudaMemset(cuda_bwproj, 0, sizeof(float)*cols); 
     }
     clock_t endIter = clock();
     printf("    End  : Iterations %d\n\n", Iterations);
-    
+    double itertime = ((double) (endIter - startIter)) / CLOCKS_PER_SEC;
+    printf("    Time for the MLEM iterations: %f\n\n", itertime);
+
     // Result is copied to f
     cudaMemcpy(f, cuda_f, sizeof(float)*cols, cudaMemcpyDeviceToHost);
 
@@ -232,17 +515,14 @@ void mlem(  int *csr_Rows, float *csr_Vals, int *csr_Cols,
 
     clock_t end = clock();
     double totaltime = ((double) (end - start)) / CLOCKS_PER_SEC;
-    double itertime = ((double) (endIter - startIter)) / CLOCKS_PER_SEC;
     printf("    Time for the whole MLEM function: %f\n", totaltime);
-    printf("    Time for the MLEM iterations: %f\n\n", itertime);
 }
 
 
 int main(){
-
     // host variables
-    int *csr_Rows, *csr_Cols, *g, rows, cols, nnzs, sum_g = 0;
-    float *csr_Vals, *norm, sum_norm = 0.0f;
+    int *csr_Rows, *csr_Cols, *csr_Rows_Trans, *csr_Cols_Trans, *g, rows, cols, nnzs, sum_g = 0;
+    float *csr_Vals, *csr_Vals_Trans, *f, *norm, sum_norm = 0.0f;
 
 
     // read matrix
@@ -253,6 +533,7 @@ int main(){
     rows = matrix.rows();
     cols = matrix.columns();
     nnzs = matrix.elements();
+    printf("    The matrix contains %d rows, %d cols, %d nnzs\n", rows, cols, nnzs);
     matrix.mapRows(0, rows);    
     csr_Rows = (int*)malloc(sizeof(int) * (rows + 1));
     csr_Cols = (int*)malloc(sizeof(int) * nnzs);
@@ -277,11 +558,15 @@ int main(){
     printf("End  : Read Image\n\n");
     
 
+    // calculate initial value
     float init = sum_g / sum_norm;
     printf("Sum of norms: %f\n", sum_norm);
     printf("Sum of g    : %d\n", sum_g);
     printf("Initial f   : %f\n\n", init);
-
+    f = (float*)malloc(sizeof(float)*cols);
+    for(int i = 0; i < cols; i++)
+        f[i] = init;
+    
 
     // transpose matrix
     printf("Begin: Transpose Matrix\n");
@@ -289,20 +574,20 @@ int main(){
     // transposeCSR(cuda_Rows, cuda_Cols, cuda_Vals, cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, rows, cols, nnzs);
     
     // transpose matrix using CPU
-    int *csr_Rows_Trans = (int*) calloc (cols+1,sizeof(int));
-    int *csr_Cols_Trans = (int*) calloc (nnzs,sizeof(int));
-    float *csr_Vals_Trans = (float*) calloc (nnzs,sizeof(float));
+    csr_Rows_Trans = (int*) calloc (cols+1,sizeof(int));
+    csr_Cols_Trans = (int*) calloc (nnzs,sizeof(int));
+    csr_Vals_Trans = (float*) calloc (nnzs,sizeof(float));
     sptrans_scanTrans<int, float>(rows, cols, nnzs, csr_Rows, csr_Cols, csr_Vals, csr_Cols_Trans, csr_Rows_Trans, csr_Vals_Trans);
     printf("End  : Transpose Matrix\n");
 
-    float *f = (float*)malloc(sizeof(float)*cols);
-    for(int i = 0; i < cols; i++)
-        f[i] = init;
     
     // run mlem algorithm matrix
     printf("\n\n******************************\n");
     printf("Begin: Run MLEM for %d iterations\n", Iterations);
-    mlem(csr_Rows, csr_Vals, csr_Cols, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs);
+    if(MLEM_Version == 0)
+        mlem_naive(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs);
+    else 
+        mlem_nccl(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs);;
     printf("End  : Run MLEM for %d iterations\n", Iterations);
     printf("******************************\n");
 

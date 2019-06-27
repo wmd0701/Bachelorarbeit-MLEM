@@ -18,7 +18,7 @@ OBJECTS = $(SOURCES:%.cpp=%.o)
 CUDA_OBJECTS = $(CUDA_SOURCES:%.cu=%.o)
 
 test: main.o $(OBJECTS) $(CUDA_OBJECTS)
-	$(NVCC) $(CUFLAGS) $(LFLAGS) $(DEFS) -o $@ main.cu $(OBJECTS) $(CUDA_OBJECTS) 
+	$(NVCC) -Xcompiler -fopenmp $(CUFLAGS) $(LFLAGS) $(DEFS) -o $@ main.cu $(OBJECTS) $(CUDA_OBJECTS) 
 
 main.o: main.cu
 	$(NVCC) -Xcompiler -fopenmp $(CUFLAGS) $(CFLAGS) $(DEFS) -I. -o $@ -c $<

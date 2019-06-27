@@ -23,7 +23,8 @@
 void csr_format_for_cuda(const Csr4Matrix& matrix, float* csrVal, int* csrRowInd, int* csrColInd){   
     int index = 0;
     csrRowInd[index] = 0;
-    #pragma omp parallel for schedule (static)
+    // !!! using openMP here will 100% lead to error in matrix
+    // #pragma omp parallel for schedule (static)
     for (int row = 0; row < matrix.rows(); ++row) {
         csrRowInd[row + 1] = csrRowInd[row] + (int)matrix.elementsInRow(row);
 	
@@ -95,10 +96,10 @@ void partitionMatrix(int *csr_Rows, int nnzs, int rows, int device_numbers, int 
     segments[0] = 0;
     segments[device_numbers] = rows;
     int i = 0;
-    int segment_nnzs = nnzs / deviceNumbers;
+    int nnzs_per_segment = nnzs / device_numbers;
     for(int segment = 1; segment < device_numbers; segment++){
         for(; i <= rows; i++)
-            if(csr_Rows[i] >= segment_nnzs * segment)
+            if(csr_Rows[i] >= nnzs_per_segment * segment)
                 break;
         segments[segment] = i;
     }
@@ -152,7 +153,7 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
     int **cuda_g = (int**)malloc(device_numbers*sizeof(int*));
     float **cuda_Vals = (float**)malloc(device_numbers*sizeof(float*));
     float **cuda_Vals_Trans = (float**)malloc(device_numbers*sizeof(float*));
-    float **cuda_norm = (float**)malloc(device_numbers*sizeof(float*))
+    float **cuda_norm = (float**)malloc(device_numbers*sizeof(float*));
     float **cuda_bwproj = (float**)malloc(device_numbers*sizeof(float*));
     float **cuda_temp = (float**)malloc(device_numbers*sizeof(float*));
     float **cuda_f = (float**)malloc(device_numbers*sizeof(float*));
@@ -358,12 +359,14 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
     double totaltime = ((double) (end - start)) / CLOCKS_PER_SEC;
     printf("    Time for the whole MLEM function: %f\n", totaltime);
 }
+
+
 void mlem_naive(    int *csr_Rows, int *csr_Cols, float *csr_Vals, 
                     int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, 
                     int *g, float *norm, float *f, int rows, int cols, int nnzs){
     
     // 1: P6000
-    cudaSetDevice(1);
+    // cudaSetDevice(1);
     clock_t start = clock();
     
     // halve the matrix
@@ -589,7 +592,7 @@ int main(){
     if(MLEM_Version == 0)
         mlem_naive(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs);
     else 
-        mlem_nccl(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs);;
+        mlem_nccl(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs);
     printf("End  : Run MLEM for %d iterations\n", Iterations);
     printf("******************************\n");
 

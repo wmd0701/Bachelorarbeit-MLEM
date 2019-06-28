@@ -13,17 +13,6 @@
 #include "sptrans.h"
 #include "nccl.h"
 
-// #define TransposeMatrixUsingCPU true
-#define Iterations 300
-
-// 0: naive mlem     
-// other ints: mlem using nccl
-#define MLEM_Version 1
-
-// 0: Quadro P6000
-// 1: Tesla K20c
-#define Naive_Device 0
-
 void csr_format_for_cuda(const Csr4Matrix& matrix, float* csrVal, int* csrRowInd, int* csrColInd){   
     int index = 0;
     csrRowInd[index] = 0;
@@ -116,7 +105,7 @@ void partitionMatrix(int *csr_Rows, int nnzs, int rows, int device_numbers, int 
 
 void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
                 int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, 
-                int *g, float *norm, float *f, int rows, int cols, int nnzs){
+                int *g, float *norm, float *f, int rows, int cols, int nnzs, int iterations){
     
     int device_numbers;
     cudaGetDeviceCount(&device_numbers);
@@ -238,9 +227,9 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
 
 
     // iterations
-    printf("    Begin: Iterations %d\n", Iterations);
+    printf("    Begin: Iterations %d\n", iterations);
     clock_t iterStart = clock();
-    for(int iter = 0; iter < Iterations; iter++){
+    for(int iter = 0; iter < iterations; iter++){
         
         // forward projection
         for(int i = 0; i < device_numbers; i++){
@@ -308,8 +297,12 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
             cudaMemset(cuda_temp[i], 0, sizeof(float)*rows);
         }
     }
+    for (int i = 0; i < device_numbers; ++i) {
+        cudaSetDevice(i);
+        cudaDeviceSynchronize();
+    }
     clock_t iterEnd = clock();
-    printf("    End  : Iterations %d\n", Iterations);
+    printf("    End  : Iterations %d\n", iterations);
     double itertime = ((double) (iterEnd - iterStart)) / CLOCKS_PER_SEC;
     printf("    Elapsed time for iterations: %f\n\n", itertime);
 
@@ -372,13 +365,12 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
 
 void mlem_naive(    int *csr_Rows, int *csr_Cols, float *csr_Vals, 
                     int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, 
-                    int *g, float *norm, float *f, int rows, int cols, int nnzs){
+                    int *g, float *norm, float *f, int rows, int cols, int nnzs, int iterations, int device){
     
-    // 1: P6000
     cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, Naive_Device);	
-    cudaSetDevice(Naive_Device);
-    printf("    \nRunning naive MLEM on CUDA device %d (%s)\n\n", Naive_Device, prop.name);
+    cudaGetDeviceProperties(&prop, device);	
+    cudaSetDevice(device);
+    printf("    \nRunning naive MLEM on CUDA device %d (%s)\n\n", device, prop.name);
     
     clock_t start = clock();
     printf("    Begin: Initialization\n");
@@ -474,9 +466,9 @@ void mlem_naive(    int *csr_Rows, int *csr_Cols, float *csr_Vals,
     printf("    Elapsed time for initialization: %f\n\n", initTime);
     
     // iterations
-    printf("    Begin: Iterations %d\n", Iterations);
+    printf("    Begin: Iterations %d\n", iterations);
     clock_t iterStart = clock();
-    for(int i = 0; i < Iterations; i++){
+    for(int i = 0; i < iterations; i++){
         // forward projection for first half matrix
         csr_Rows[halfrows1] = offset;
         cudaMemcpy(cuda_Rows, csr_Rows, sizeof(int)*(halfrows1 + 1), cudaMemcpyHostToDevice);
@@ -515,8 +507,9 @@ void mlem_naive(    int *csr_Rows, int *csr_Cols, float *csr_Vals,
         cudaMemset(cuda_temp,   0, sizeof(float)*rows);
         cudaMemset(cuda_bwproj, 0, sizeof(float)*cols); 
     }
+    cudaDeviceSynchronize();
     clock_t iterEnd = clock();
-    printf("    End  : Iterations %d\n", Iterations);
+    printf("    End  : Iterations %d\n", iterations);
     double itertime = ((double) (iterEnd - iterStart)) / CLOCKS_PER_SEC;
     printf("    Elapsed time for iterations: %f\n\n", itertime);
 
@@ -543,14 +536,138 @@ void mlem_naive(    int *csr_Rows, int *csr_Cols, float *csr_Vals,
 }
 
 
+void mlem_test(     int *csr_Rows, int *csr_Cols, float *csr_Vals, 
+                    int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, 
+                    int *g, float *norm, float *f, int rows, int cols, int nnzs, int iterations, int device){
+
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, device);	
+    cudaSetDevice(device);
+    printf("    \nRunning test MLEM on CUDA device %d (%s)\n\n", device, prop.name);
+
+    clock_t start = clock();
+    printf("    Begin: Initialization\n");
+    clock_t initStart = clock();
+
+    // device variables
+    int *cuda_Rows, *cuda_Cols, *cuda_Rows_Trans, *cuda_Cols_Trans, *cuda_g;
+    float *cuda_Vals, *cuda_Vals_Trans, *cuda_norm, *cuda_bwproj, *cuda_temp, *cuda_f;
+
+    // allocate device storage
+    cudaMalloc((void**)&cuda_Rows, sizeof(int)*(rows + 1));
+    cudaMalloc((void**)&cuda_Cols, sizeof(int)*nnzs);
+    cudaMalloc((void**)&cuda_Vals, sizeof(float)*nnzs);
+    cudaMalloc((void**)&cuda_Rows_Trans, sizeof(int)*(cols + 1));
+    cudaMalloc((void**)&cuda_Cols_Trans, sizeof(int)*nnzs);
+    cudaMalloc((void**)&cuda_Vals_Trans, sizeof(float)*nnzs);
+    cudaMalloc((void**)&cuda_f, sizeof(float)*cols);
+    cudaMalloc((void**)&cuda_g, sizeof(int)*rows);
+    cudaMalloc((void**)&cuda_norm, sizeof(float)*cols);
+    cudaMalloc((void**)&cuda_bwproj, sizeof(float)*cols);
+    cudaMalloc((void**)&cuda_temp, sizeof(float)*rows);
+
+    // value initialization
+    cudaMemcpy(cuda_Rows, csr_Rows, sizeof(int)*(rows + 1), cudaMemcpyHostToDevice);
+    cudaMemcpy(cuda_Cols, csr_Cols, sizeof(int)* nnzs, cudaMemcpyHostToDevice);
+    cudaMemcpy(cuda_Vals, csr_Vals, sizeof(float)* nnzs, cudaMemcpyHostToDevice);
+    cudaMemcpy(cuda_Rows_Trans, csr_Rows_Trans, sizeof(int)*(cols + 1), cudaMemcpyHostToDevice);
+    cudaMemcpy(cuda_Cols_Trans, csr_Cols_Trans, sizeof(int)* nnzs, cudaMemcpyHostToDevice);
+    cudaMemcpy(cuda_Vals_Trans, csr_Vals_Trans, sizeof(float)* nnzs, cudaMemcpyHostToDevice);
+    cudaMemcpy(cuda_g, g, sizeof(int)* rows, cudaMemcpyHostToDevice);
+    cudaMemcpy(cuda_norm, norm, sizeof(float)* cols, cudaMemcpyHostToDevice);
+    cudaMemset(cuda_bwproj, 0, sizeof(float)*cols);
+    cudaMemset(cuda_temp, 0, sizeof(float)*rows);
+    cudaMemcpy(cuda_f, f, sizeof(float)* cols, cudaMemcpyHostToDevice);
+    
+    // Determine grid size and section size (block size is set to 1024 by default)
+    int blocksize = 1024;
+    int gridsize_correl = ceil((double)rows / blocksize);
+    int gridsize_update = ceil((double)cols / blocksize);
+    int items_fwproj = rows + nnzs;
+    int items_bwproj = cols + nnzs;
+    int gridsize_fwproj = ceil(sqrt((double)items_fwproj / blocksize));
+    int gridsize_bwproj = ceil(sqrt((double)items_bwproj / blocksize));
+    int secsize_fwproj = ceil((double)items_fwproj / (blocksize * gridsize_fwproj));
+    int secsize_bwproj = ceil((double)items_bwproj / (blocksize * gridsize_bwproj));
+
+    clock_t initEnd = clock();
+    printf("    End  : Initialization\n");
+    double initTime = ((double) (initEnd - initStart)) / CLOCKS_PER_SEC;
+    printf("    Elapsed time for initialization: %f\n\n", initTime);
+
+    // iterations
+    printf("    Begin: Iterations %d\n", iterations);
+    clock_t iterStart = clock();
+    for(int i = 0; i < iterations; i++){
+        // forward projection
+        calcFwProj <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Vals, cuda_Cols, cuda_f, cuda_temp, secsize_fwproj, rows, nnzs);
+
+        // correlation
+        calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
+
+        // backward projection
+        calcBwProj <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Vals_Trans, cuda_Cols_Trans, cuda_temp, cuda_bwproj, secsize_bwproj, cols, nnzs);
+
+        // update, for mlem naive calcUpdateAndClearBwproj should be used
+        calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
+
+        // clear cuda_temp and cuda_bwproj
+        cudaMemset(cuda_temp,   0, sizeof(float)*rows);
+        cudaMemset(cuda_bwproj, 0, sizeof(float)*cols); 
+    }
+    cudaDeviceSynchronize();
+    clock_t iterEnd = clock();
+    printf("    End  : Iterations %d\n", iterations);
+    double itertime = ((double) (iterEnd - iterStart)) / CLOCKS_PER_SEC;
+    printf("    Elapsed time for iterations: %f\n\n", itertime);
+
+    // Result is copied to f
+    cudaMemcpy(f, cuda_f, sizeof(float)*cols, cudaMemcpyDeviceToHost);
+
+    // free all memory
+    if(cuda_Rows) cudaFree(cuda_Rows);
+    if(cuda_Cols) cudaFree(cuda_Cols);
+    if(cuda_Vals) cudaFree(cuda_Vals);
+    if(cuda_Rows_Trans) cudaFree(cuda_Rows_Trans);
+    if(cuda_Cols_Trans) cudaFree(cuda_Cols_Trans);
+    if(cuda_Vals_Trans) cudaFree(cuda_Vals_Trans);
+    if(cuda_g) cudaFree(cuda_g);
+    if(cuda_norm) cudaFree(cuda_norm);
+    if(cuda_f) cudaFree(cuda_f);
+    if(cuda_bwproj) cudaFree(cuda_bwproj);
+    if(cuda_temp) cudaFree(cuda_temp);
+
+
+    clock_t end = clock();
+    double totaltime = ((double) (end - start)) / CLOCKS_PER_SEC;
+    printf("    Elapsed time totally       : %f\n\n", totaltime);
+}
+
+
 int main(){
+    int iterations = 300;
+    // 0: test mlem    1: naive mlme    other ints: nccl mlem
+    int MLEM_Version = 1;
+    // 0: Quadro P6000 1: Tesla K20c
+    int device = 0;
+
+    printf("\nIteration times: ");
+    int result = scanf("%d", &iterations);
+    printf("\nMLEM version (0: test version   1: naive version   others: nccl version): ");
+    result = scanf("%d", &MLEM_Version);
+    if(MLEM_Version == 0 || MLEM_Version == 1){
+        printf("\nUsing device (0: Quadro P6000   1: Tesla K20c): ");
+        result = scanf("%d", &device);
+    }
+    printf("\n");
+
     // host variables
     int *csr_Rows, *csr_Cols, *csr_Rows_Trans, *csr_Cols_Trans, *g, rows, cols, nnzs, sum_g = 0;
     float *csr_Vals, *csr_Vals_Trans, *f, *norm, sum_norm = 0.0f;
 
 
     // read matrix
-    printf("\nBegin: Read Matrix\n");
+    printf("Begin: Read Matrix\n");
     Csr4Matrix matrix("/scratch/pet/madpet2.p016.csr4.small");
     printf("End  : Read Matrix\n\n");
     printf("Begin: Create CSR Format for Matrix\n");
@@ -618,12 +735,13 @@ int main(){
     
     // run mlem algorithm matrix
     printf("\n***********************************************\n");
-    printf("Begin: Run MLEM for %d iterations\n", Iterations);
-    if(MLEM_Version == 0)
-        mlem_naive(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs);
-    else 
-        mlem_nccl(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs);
-    printf("End  : Run MLEM for %d iterations\n", Iterations);
+    printf("Begin: Run MLEM for %d iterations\n", iterations);
+    switch(MLEM_Version){
+        case 0: mlem_test(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs, iterations, device); break;
+        case 1: mlem_naive(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs, iterations, device); break;
+        default: mlem_nccl(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs, iterations); break;
+    }
+    printf("End  : Run MLEM for %d iterations\n", iterations);
     printf("***********************************************\n");
 
     // sum up all elements in the solution f

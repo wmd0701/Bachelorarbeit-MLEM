@@ -248,7 +248,7 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
         // forward projection
         for(int i = 0; i < device_numbers; i++){
             cudaSetDevice(i);
-            calcFwProj <<< gridsize_fwproj[i], blocksize >>> (  cuda_Rows[i], cuda_Vals[i], cuda_Cols[i], cuda_f[i], 
+            calcFwProj <<< gridsize_fwproj[i], blocksize >>> (  cuda_Rows[i], cuda_Cols[i], cuda_Vals[i], cuda_f[i], 
                                                                 cuda_temp[i] + segments[i], secsize_fwproj[i], segment_rows[i], segment_nnzs[i]);
         }
 
@@ -275,7 +275,7 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
         // backward projection
         for(int i = 0; i < device_numbers; i++){
             cudaSetDevice(i);
-            calcBwProj <<< gridsize_bwproj[i], blocksize >>> (  cuda_Rows_Trans[i], cuda_Vals_Trans[i], cuda_Cols_Trans[i], cuda_temp[i], 
+            calcBwProj <<< gridsize_bwproj[i], blocksize >>> (  cuda_Rows_Trans[i], cuda_Cols_Trans[i], cuda_Vals_Trans[i], cuda_temp[i], 
                                                                 cuda_bwproj[i] + segments_trans[i], secsize_bwproj[i], segment_rows_trans[i], segment_nnzs_trans[i]);
         }
 
@@ -488,14 +488,14 @@ void mlem_naive(    int *csr_Rows, int *csr_Cols, float *csr_Vals,
         cudaMemcpy(cuda_Rows, csr_Rows, sizeof(int)*(halfrows1 + 1), cudaMemcpyHostToDevice);
         cudaMemcpy(cuda_Cols, csr_Cols, sizeof(int)* halfnnzs1, cudaMemcpyHostToDevice);
         cudaMemcpy(cuda_Vals, csr_Vals, sizeof(float)* halfnnzs1, cudaMemcpyHostToDevice);
-        calcFwProj <<< gridsize_fwproj1, blocksize >>> (cuda_Rows, cuda_Vals, cuda_Cols, cuda_f, cuda_temp, secsize_fwproj1, halfrows1, halfnnzs1);
+        calcFwProj <<< gridsize_fwproj1, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp, secsize_fwproj1, halfrows1, halfnnzs1);
 
         // forward projection for second half matrix
         csr_Rows[halfrows1] = 0;
         cudaMemcpy(cuda_Rows, csr_Rows+halfrows1, sizeof(int)*(halfrows2 + 1), cudaMemcpyHostToDevice);
         cudaMemcpy(cuda_Cols, csr_Cols+halfnnzs1, sizeof(int)* halfnnzs2, cudaMemcpyHostToDevice);
         cudaMemcpy(cuda_Vals, csr_Vals+halfnnzs1, sizeof(float)* halfnnzs2, cudaMemcpyHostToDevice);
-        calcFwProj <<< gridsize_fwproj2, blocksize >>> (cuda_Rows, cuda_Vals, cuda_Cols, cuda_f, cuda_temp+halfrows1, secsize_fwproj2, halfrows2, halfnnzs2);
+        calcFwProj <<< gridsize_fwproj2, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp+halfrows1, secsize_fwproj2, halfrows2, halfnnzs2);
         
         // correlation
         calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
@@ -505,14 +505,14 @@ void mlem_naive(    int *csr_Rows, int *csr_Cols, float *csr_Vals,
         cudaMemcpy(cuda_Rows_Trans, csr_Rows_Trans, sizeof(int)*(halfrows1_trans + 1), cudaMemcpyHostToDevice);
         cudaMemcpy(cuda_Cols_Trans, csr_Cols_Trans, sizeof(int)* halfnnzs1_trans, cudaMemcpyHostToDevice);
         cudaMemcpy(cuda_Vals_Trans, csr_Vals_Trans, sizeof(float)* halfnnzs1_trans, cudaMemcpyHostToDevice);
-        calcBwProj <<< gridsize_bwproj1, blocksize >>> (cuda_Rows_Trans, cuda_Vals_Trans, cuda_Cols_Trans, cuda_temp, cuda_bwproj, secsize_bwproj1, halfrows1_trans, halfnnzs1_trans);
+        calcBwProj <<< gridsize_bwproj1, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj, secsize_bwproj1, halfrows1_trans, halfnnzs1_trans);
 
         // backward projection for second half transposed matrix
         csr_Rows_Trans[halfrows1_trans] = 0;
         cudaMemcpy(cuda_Rows_Trans, csr_Rows_Trans+halfrows1_trans, sizeof(int)*(halfrows2_trans + 1), cudaMemcpyHostToDevice);
         cudaMemcpy(cuda_Cols_Trans, csr_Cols_Trans+halfnnzs1_trans, sizeof(int)* halfnnzs2_trans, cudaMemcpyHostToDevice);
         cudaMemcpy(cuda_Vals_Trans, csr_Vals_Trans+halfnnzs1_trans, sizeof(float)* halfnnzs2_trans, cudaMemcpyHostToDevice);
-        calcBwProj <<< gridsize_bwproj2, blocksize >>> (cuda_Rows_Trans, cuda_Vals_Trans, cuda_Cols_Trans, cuda_temp, cuda_bwproj+halfrows1_trans, secsize_bwproj2, halfrows2_trans, halfnnzs2_trans);
+        calcBwProj <<< gridsize_bwproj2, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj+halfrows1_trans, secsize_bwproj2, halfrows2_trans, halfnnzs2_trans);
         
         // update, for mlem naive calcUpdateAndClearBwproj should be used
         calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
@@ -552,7 +552,7 @@ void mlem_naive(    int *csr_Rows, int *csr_Cols, float *csr_Vals,
 
 void mlem_test(     int *csr_Rows, int *csr_Cols, float *csr_Vals, 
                     int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, 
-                    int *g, float *norm, float *f, int rows, int cols, int nnzs, int iterations, int device){
+                    int *g, float *norm, float *f, int rows, int cols, int nnzs, int iterations, int device, int brutal){
 
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, device);	
@@ -612,25 +612,42 @@ void mlem_test(     int *csr_Rows, int *csr_Cols, float *csr_Vals,
     // iterations
     printf("    Begin: Iterations %d\n", iterations);
     clock_t iterStart = clock();
-    for(int i = 0; i < iterations; i++){
-        // forward projection
-        // calcFwProj <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Vals, cuda_Cols, cuda_f, cuda_temp, secsize_fwproj, rows, nnzs);
-        calcFwProj_naive <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Vals, cuda_Cols, cuda_f, cuda_temp, rows);
-
-        // correlation
-        calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
-
-        // backward projection
-        // calcBwProj <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Vals_Trans, cuda_Cols_Trans, cuda_temp, cuda_bwproj, secsize_bwproj, cols, nnzs);
-        calcBwProj_naive <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Vals_Trans, cuda_Cols_Trans, cuda_temp, cuda_bwproj, cols);
-
-        // update, for mlem naive calcUpdateAndClearBwproj should be used
-        calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
-
-        // clear cuda_temp and cuda_bwproj
-        cudaMemset(cuda_temp,   0, sizeof(float)*rows);
-        cudaMemset(cuda_bwproj, 0, sizeof(float)*cols); 
-    }
+    if(brutal == 0)
+        for(int i = 0; i < iterations; i++){
+            // forward projection
+            calcFwProj_naive <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp, rows);
+    
+            // correlation
+            calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
+    
+            // backward projection
+            calcBwProj_naive <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj, cols);
+    
+            // update, for mlem naive calcUpdateAndClearBwproj should be used
+            calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
+    
+            // clear cuda_temp and cuda_bwproj
+            // cudaMemset(cuda_temp,   0, sizeof(float)*rows);
+            // cudaMemset(cuda_bwproj, 0, sizeof(float)*cols); 
+        }
+    else
+        for(int i = 0; i < iterations; i++){
+            // forward projection
+            calcFwProj <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp, secsize_fwproj, rows, nnzs);
+            
+            // correlation
+            calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
+    
+            // backward projection
+            calcBwProj <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj, secsize_bwproj, cols, nnzs);
+            
+            // update, for mlem naive calcUpdateAndClearBwproj should be used
+            calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
+    
+            // clear cuda_temp and cuda_bwproj
+            cudaMemset(cuda_temp,   0, sizeof(float)*rows);
+            cudaMemset(cuda_bwproj, 0, sizeof(float)*cols);     
+        }
     cudaDeviceSynchronize();
     clock_t iterEnd = clock();
     printf("    End  : Iterations %d\n", iterations);
@@ -666,6 +683,8 @@ int main(){
     int MLEM_Version = 1;
     // 0: Quadro P6000 1: Tesla K20c
     int device = 0;
+    // 0: using brutal matrix-vector multiplication    other ints: using NVIDIA sparse matrix-vector multiplication
+    int brutal = 0;
 
     printf("\nIteration times: ");
     int result = scanf("%d", &iterations);
@@ -674,6 +693,8 @@ int main(){
     if(MLEM_Version == 0 || MLEM_Version == 1){
         printf("\nUsing device (0: Quadro P6000   1: Tesla K20c): ");
         result = scanf("%d", &device);
+        printf("\nUsing brutal matrix-vector multiplication? (0: yes   others: no): ");
+        result = scanf("%d", &brutal);
     }
     printf("\n");
 
@@ -761,7 +782,7 @@ int main(){
     printf("\n***********************************************\n");
     printf("Begin: Run MLEM for %d iterations\n", iterations);
     switch(MLEM_Version){
-        case 0: mlem_test(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs, iterations, device); break;
+        case 0: mlem_test(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs, iterations, device, brutal); break;
         case 1: mlem_naive(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs, iterations, device); break;
         default: mlem_nccl(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs, iterations); break;
     }

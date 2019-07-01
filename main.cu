@@ -78,6 +78,20 @@ int halfMatrix(int *csr_Rows, int nnzs, int rows){
     return i;
 }
 
+// return row index for in which row the nnzs are distributed into two pars equally
+int fiveSixth(int *csr_Rows, int nnzs, int rows){
+    int i = 0;
+    double halfnnzs = (double)nnzs * 5.0 / 6.0;
+    printf("\nbreakpoint is %lf, nnzs %d, rows %d\n", halfnnzs, nnzs, rows);
+
+    for(; i <= rows; i++){
+        if(csr_Rows[i] >= halfnnzs)
+            break;
+    }
+    printf("\nresult is %d\n", i);
+    return i;
+}
+
 /* a general version of halfMatrix: partition matrix into device_numbers parts, corresponding rows are saved in the array segments
    start row of segment i: segments[i]
     end  row of segment i: segments[i+1]
@@ -585,8 +599,8 @@ void mlem_test(     int *csr_Rows, int *csr_Cols, float *csr_Vals,
     int gridsize_update = ceil((double)cols / blocksize);
     int items_fwproj = rows + nnzs;
     int items_bwproj = cols + nnzs;
-    int gridsize_fwproj = ceil(sqrt((double)items_fwproj / blocksize));
-    int gridsize_bwproj = ceil(sqrt((double)items_bwproj / blocksize));
+    int gridsize_fwproj = gridsize_correl;//ceil(sqrt((double)items_fwproj / blocksize));
+    int gridsize_bwproj = gridsize_update;//ceil(sqrt((double)items_bwproj / blocksize));
     int secsize_fwproj = ceil((double)items_fwproj / (blocksize * gridsize_fwproj));
     int secsize_bwproj = ceil((double)items_bwproj / (blocksize * gridsize_bwproj));
 
@@ -600,13 +614,15 @@ void mlem_test(     int *csr_Rows, int *csr_Cols, float *csr_Vals,
     clock_t iterStart = clock();
     for(int i = 0; i < iterations; i++){
         // forward projection
-        calcFwProj <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Vals, cuda_Cols, cuda_f, cuda_temp, secsize_fwproj, rows, nnzs);
+        // calcFwProj <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Vals, cuda_Cols, cuda_f, cuda_temp, secsize_fwproj, rows, nnzs);
+        calcFwProj_naive <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Vals, cuda_Cols, cuda_f, cuda_temp, rows);
 
         // correlation
         calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
 
         // backward projection
-        calcBwProj <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Vals_Trans, cuda_Cols_Trans, cuda_temp, cuda_bwproj, secsize_bwproj, cols, nnzs);
+        // calcBwProj <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Vals_Trans, cuda_Cols_Trans, cuda_temp, cuda_bwproj, secsize_bwproj, cols, nnzs);
+        calcBwProj_naive <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Vals_Trans, cuda_Cols_Trans, cuda_temp, cuda_bwproj, cols);
 
         // update, for mlem naive calcUpdateAndClearBwproj should be used
         calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
@@ -668,6 +684,7 @@ int main(){
 
     // read matrix
     printf("Begin: Read Matrix\n");
+    //small
     Csr4Matrix matrix("/scratch/pet/madpet2.p016.csr4.small");
     printf("End  : Read Matrix\n\n");
     printf("Begin: Create CSR Format for Matrix\n");
@@ -696,6 +713,7 @@ int main(){
     // read image
     printf("Begin: Read Image\n");
     start = clock();
+    // small
     Vector<int> image("/scratch/pet/Trues_Derenzo_GATE_rot_sm_200k.LMsino.small");
     g = image.ptr();
     // TODO: calculate sum_g using gpu
@@ -715,6 +733,12 @@ int main(){
     for(int i = 0; i < cols; i++)
         f[i] = init;
     
+
+
+    // !!!!!!!!!!!!!!!!!!!!!!
+    // rows = fiveSixth(csr_Rows, nnzs, rows);
+    // nnzs = csr_Rows[rows];
+    // printf("\nNow rows is %d, nnzs is %d\n", rows, nnzs);
 
     // transpose matrix
     printf("Begin: Transpose Matrix\n");

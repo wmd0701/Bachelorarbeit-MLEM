@@ -13,13 +13,13 @@
 	@param rows:			number of rows (equals to length of row array - 1)
 	@param nnzs:			number of nnzs (equals to length of val/col array)
 */
-__global__ void calcFwProj(	int *csr_Row, float *csr_Val, int *csr_Col, float *f, float *fwproj, 
+__global__ void calcFwProj(	int *csr_Row, int *csr_Col, float *csr_Val, float *f, float *fwproj, 
 							int secSize, int rows, int nnzs) {
 	
 	// !!!  gridsize x blocksize x sectionsize		 >= rows + nnzs
 	// !!! (gridsize x blocksize - 1) x sectionsize  <  rows + nnzs
 	
-	SpMV_start(csr_Row, csr_Val, csr_Col, f, fwproj, secSize, rows, nnzs);
+	SpMV_start(csr_Row, csr_Col, csr_Val, f, fwproj, secSize, rows, nnzs);
 }
 
 
@@ -51,13 +51,13 @@ __global__ void calcCorrel(int *g, float *fwproj, int rows) {
 	@param cols:			number of rows of transposed matrix (columns of original matrix)
 	@param nnzs:			number of nnzs (equals to length of val/col array)
 */
-__global__ void calcBwProj(	int *csr_Row, float *csr_Val, int *csr_Col, float *correl, float *bwproj,
+__global__ void calcBwProj(	int *csr_Row_Trans, int *csr_Col_Trans, float *csr_Val_Trans, float *correl, float *bwproj,
 							int secSize, int cols, int nnzs){
 
 	// !!!  gridsize x blocksize x sectionsize		>= cols + nnzs
 	// !!! (gridsize x blocksize - 1) x sectionsize <  cols + nnzs
 	
-	SpMV_start(csr_Row, csr_Val, csr_Col, correl, bwproj, secSize, cols, nnzs);
+	SpMV_start(csr_Row_Trans, csr_Col_Trans, csr_Val_Trans, correl, bwproj, secSize, cols, nnzs);
 }
 
 
@@ -105,6 +105,16 @@ __global__ void calcUpdateInPlace(float *f, float *norm, float *bwproj, int cols
 }
 
 
+__global__ void calcFwProj_naive(int *csr_Row, int *csr_Col, float *csr_Val, float *f, float *fwproj, int rows){
+	naive_matrix_vector_mul(csr_Row, csr_Col, csr_Val, f, fwproj, rows);
+}
+
+
+__global__ void calcBwProj_naive(int *csr_Row_Trans, int *csr_Col_Trans, float *csr_Val_Trans, float *correl, float *bwproj, int cols){
+	naive_matrix_vector_mul(csr_Row_Trans, csr_Col_Trans, csr_Val_Trans, correl, bwproj, cols);	
+}
+
+
 /*
 	brief: find start coordinate for each section and call SpMV_work
 	@param csr_Row:		row array
@@ -116,7 +126,7 @@ __global__ void calcUpdateInPlace(float *f, float *norm, float *bwproj, int cols
 	@param rows:			number of rows (equals to length of row array - 1)
 	@param nnzs:			number of nnzs (equals to length of val/col array)
 */
-__device__ void SpMV_start(	int *csr_Row, float *csr_Val, int *csr_Col, float *x, float *result,
+__device__ void SpMV_start(	int *csr_Row, int *csr_Col, float *csr_Val, float *x, float *result,
 							int secSize, int rows, int nnzs) {
 	
 	// !!!  gridsize x blocksize x sectionsize		 >= rows + nnzs
@@ -151,7 +161,7 @@ __device__ void SpMV_start(	int *csr_Row, float *csr_Val, int *csr_Col, float *x
 		*/
 	}
 
-	SpMV_work(csr_Row, csr_Val, csr_Col, x, result, secSize, rows, nnzs, i, j);
+	SpMV_work(csr_Row, csr_Col, csr_Val, x, result, secSize, rows, nnzs, i, j);
 }
 
 
@@ -161,7 +171,7 @@ __device__ void SpMV_start(	int *csr_Row, float *csr_Val, int *csr_Col, float *x
 	@param j:			y-coordinate of start point
 	other params:		same as SpMV_start
 */
-__device__ void SpMV_work(	int *csr_Row, float *csr_Val, int *csr_Col, float *x, float *result,
+__device__ void SpMV_work(	int *csr_Row, int *csr_Col, float *csr_Val, float *x, float *result,
 							int secSize, int rows, int nnzs, int i, int j) {
 	int end = i + j + secSize;
 	if (end > nnzs + rows)
@@ -182,4 +192,18 @@ __device__ void SpMV_work(	int *csr_Row, float *csr_Val, int *csr_Col, float *x,
 	if (rowTimesVector != 0.0f)
 		// result[i] += rowTimesVector;
 		atomicAdd(result + i, rowTimesVector);
+}
+
+
+__device__ void naive_matrix_vector_mul(int *csr_Row, int *csr_Col, float *csr_Val, float *x, float *result, int rows){
+	int index = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if(index < rows){
+		int items = csr_Row[index+1] - csr_Row[index];
+		float sum = 0.0f; 
+		for(int i = 0 ; i < items ; i++)
+			sum += csr_Val[i] * x[csr_Col[i]];
+		
+		result[index] = sum;
+	}	
 }

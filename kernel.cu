@@ -199,9 +199,10 @@ __device__ void naive_matrix_vector_mul(int *csr_Row, int *csr_Col, float *csr_V
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 
 	if(index < rows){
-		int items = csr_Row[index+1] - csr_Row[index];
+		int start = csr_Row[index];
+		int end   = csr_Row[index+1];
 		float sum = 0.0f; 
-		for(int i = 0 ; i < items ; i++)
+		for(int i = start ; i < end ; i++)
 			sum += csr_Val[i] * x[csr_Col[i]];
 		
 		result[index] = sum;

@@ -82,13 +82,10 @@ int halfMatrix(int *csr_Rows, int nnzs, int rows){
 int fiveSixth(int *csr_Rows, int nnzs, int rows){
     int i = 0;
     double halfnnzs = (double)nnzs * 5.0 / 6.0;
-    printf("\nbreakpoint is %lf, nnzs %d, rows %d\n", halfnnzs, nnzs, rows);
-
-    for(; i <= rows; i++){
+    for(; i <= rows; i++)
         if(csr_Rows[i] >= halfnnzs)
             break;
-    }
-    printf("\nresult is %d\n", i);
+    
     return i;
 }
 
@@ -599,8 +596,8 @@ void mlem_test(     int *csr_Rows, int *csr_Cols, float *csr_Vals,
     int gridsize_update = ceil((double)cols / blocksize);
     int items_fwproj = rows + nnzs;
     int items_bwproj = cols + nnzs;
-    int gridsize_fwproj = gridsize_correl;//ceil(sqrt((double)items_fwproj / blocksize));
-    int gridsize_bwproj = gridsize_update;//ceil(sqrt((double)items_bwproj / blocksize));
+    int gridsize_fwproj = ceil(sqrt((double)items_fwproj / blocksize) * 30); // gridsize_correl;
+    int gridsize_bwproj = ceil(sqrt((double)items_bwproj / blocksize) * 30); // gridsize_update;
     int secsize_fwproj = ceil((double)items_fwproj / (blocksize * gridsize_fwproj));
     int secsize_bwproj = ceil((double)items_bwproj / (blocksize * gridsize_bwproj));
 
@@ -681,6 +678,8 @@ int main(){
     int iterations = 300;
     // 0: test mlem    1: naive mlme    other ints: nccl mlem
     int MLEM_Version = 1;
+    // 0: using small matrix     other ints: using big matrix
+    int small = 0;
     // 0: Quadro P6000 1: Tesla K20c
     int device = 0;
     // 0: using brutal matrix-vector multiplication    other ints: using NVIDIA sparse matrix-vector multiplication
@@ -690,6 +689,8 @@ int main(){
     int result = scanf("%d", &iterations);
     printf("\nMLEM version (0: test version   1: naive version   others: nccl version): ");
     result = scanf("%d", &MLEM_Version);
+    printf("\nUsing small matrix? (0: yes   others: no): ");
+    result = scanf("%d", &small);
     if(MLEM_Version == 0 || MLEM_Version == 1){
         printf("\nUsing device (0: Quadro P6000   1: Tesla K20c): ");
         result = scanf("%d", &device);
@@ -705,8 +706,8 @@ int main(){
 
     // read matrix
     printf("Begin: Read Matrix\n");
-    //small
-    Csr4Matrix matrix("/scratch/pet/madpet2.p016.csr4.small");
+    std::string matrixPath = small == 0? "/scratch/pet/madpet2.p016.csr4.small" : "/scratch/pet/madpet2.p016.csr4";
+    Csr4Matrix matrix(matrixPath);
     printf("End  : Read Matrix\n\n");
     printf("Begin: Create CSR Format for Matrix\n");
     clock_t start = clock();
@@ -734,8 +735,8 @@ int main(){
     // read image
     printf("Begin: Read Image\n");
     start = clock();
-    // small
-    Vector<int> image("/scratch/pet/Trues_Derenzo_GATE_rot_sm_200k.LMsino.small");
+    std::string imagePath = small == 0? "/scratch/pet/Trues_Derenzo_GATE_rot_sm_200k.LMsino.small" : "/scratch/pet/Trues_Derenzo_GATE_rot_sm_200k.LMsino";
+    Vector<int> image(imagePath);
     g = image.ptr();
     // TODO: calculate sum_g using gpu
     for(int i = 0; i < rows; i++)
@@ -757,9 +758,11 @@ int main(){
 
 
     // !!!!!!!!!!!!!!!!!!!!!!
-    // rows = fiveSixth(csr_Rows, nnzs, rows);
-    // nnzs = csr_Rows[rows];
-    // printf("\nNow rows is %d, nnzs is %d\n", rows, nnzs);
+    if(small != 0){
+        rows = fiveSixth(csr_Rows, nnzs, rows);
+        nnzs = csr_Rows[rows];
+        printf("\nNow rows is %d, nnzs is %d\n", rows, nnzs);
+    }
 
     // transpose matrix
     printf("Begin: Transpose Matrix\n");

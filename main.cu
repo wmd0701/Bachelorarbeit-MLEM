@@ -487,18 +487,36 @@ void mlem_test(     int *csr_Rows, int *csr_Cols, float *csr_Vals,
                 cudaMemset(cuda_bwproj, 0, sizeof(float)*cols);     
             }
         } break;
-
-        case 3: { // case 3: coalesced brutal
+        
+        case 3: { // case 3: coalesced brutal block
             for(int i = 0; i < iterations; i++){
-                calcFwProj_coalesced_brutal <<< rows, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp);
+                calcFwProj_coalesced_brutal_block <<< rows, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp);
         
                 calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
         
-                calcBwProj_coalesced_brutal <<< cols, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj);
+                calcBwProj_coalesced_brutal_block <<< cols, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj);
         
                 calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
             } 
         } break;
+        
+        case 4: { // case 4: coalesced brutal warp
+            int gridsize_fwproj = ceil((double)rows / 32);
+            int gridsize_bwproj = ceil((double)cols / 32);
+            for(int i = 0; i < iterations; i++){
+                calcFwProj_coalesced_brutal_warp <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp, rows);
+        
+                calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
+        
+                calcBwProj_coalesced_brutal_warp <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj, cols);
+        
+                calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
+
+                cudaMemset(cuda_temp,   0, sizeof(float)*rows);
+                cudaMemset(cuda_bwproj, 0, sizeof(float)*cols);     
+            } 
+        } break;
+        
 
         default: break;
     }
@@ -540,7 +558,7 @@ int main(){
     int small = 0;
     // 0: Quadro P6000 1: Tesla K20c
     int device = 0;
-    // 0: CSRMV    1: brutal   2: coalesced CSRMV   3: coalesced brutal 
+    // 0: CSRMV    1: brutal   2: coalesced CSRMV   3: coalesced brutal block   4:coalesced brutal warp
     int matrix_vector_mul = 0;
 
     printf("\nIteration times: ");
@@ -552,7 +570,7 @@ int main(){
     if(MLEM_Version == 0 || MLEM_Version == 1){
         printf("\nUse which device? (0: Quadro P6000   1: Tesla K20c): ");
         result = scanf("%d", &device);
-        printf("\nUse which kind of matrix-vector multiplication? (0: CSRMV   1: brutal   2: coalesced CSRMV   3: coalesced brutal): ");
+        printf("\nUse which kind of matrix-vector multiplication? (0: CSRMV   1: brutal   2: coalesced CSRMV   3: coalesced brutal block   4: coalesced brutal warp): ");
         result = scanf("%d", &matrix_vector_mul);
     }
     printf("\n");

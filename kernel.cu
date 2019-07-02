@@ -13,13 +13,13 @@
 	@param rows:			number of rows (equals to length of row array - 1)
 	@param nnzs:			number of nnzs (equals to length of val/col array)
 */
-__global__ void calcFwProj(	int *csr_Row, int *csr_Col, float *csr_Val, float *f, float *fwproj, 
+__global__ void calcFwProj(	int *csr_Rows, int *csr_Cols, float *csr_Vals, float *f, float *fwproj, 
 							int secSize, int rows, int nnzs) {
 	
 	// !!!  gridsize x blocksize x sectionsize		 >= rows + nnzs
 	// !!! (gridsize x blocksize - 1) x sectionsize  <  rows + nnzs
 	
-	SpMV_start(csr_Row, csr_Col, csr_Val, f, fwproj, secSize, rows, nnzs);
+	SpMV_start(csr_Rows, csr_Cols, csr_Vals, f, fwproj, secSize, rows, nnzs);
 }
 
 
@@ -51,13 +51,13 @@ __global__ void calcCorrel(int *g, float *fwproj, int rows) {
 	@param cols:			number of rows of transposed matrix (columns of original matrix)
 	@param nnzs:			number of nnzs (equals to length of val/col array)
 */
-__global__ void calcBwProj(	int *csr_Row_Trans, int *csr_Col_Trans, float *csr_Val_Trans, float *correl, float *bwproj,
+__global__ void calcBwProj(	int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, float *correl, float *bwproj,
 							int secSize, int cols, int nnzs){
 
 	// !!!  gridsize x blocksize x sectionsize		>= cols + nnzs
 	// !!! (gridsize x blocksize - 1) x sectionsize <  cols + nnzs
 	
-	SpMV_start(csr_Row_Trans, csr_Col_Trans, csr_Val_Trans, correl, bwproj, secSize, cols, nnzs);
+	SpMV_start(csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, correl, bwproj, secSize, cols, nnzs);
 }
 
 
@@ -104,30 +104,41 @@ __global__ void calcUpdateInPlace(float *f, float *norm, float *bwproj, int cols
 	}
 }
 
-__global__ void calcFwProj_coalesced (int *csr_Row, int *csr_Col, float *csr_Val, float *f, float *fwproj, int secSize, int rows, int nnzs) {
-	SpMV_start_coalesced(csr_Row, csr_Col, csr_Val, f, fwproj, secSize, rows, nnzs);
+__global__ void calcFwProj_coalesced (int *csr_Rows, int *csr_Cols, float *csr_Vals, float *f, float *fwproj, int secSize, int rows, int nnzs) {
+	SpMV_start_coalesced(csr_Rows, csr_Cols, csr_Vals, f, fwproj, secSize, rows, nnzs);
 }
 
-__global__ void calcBwProj_coalesced (int *csr_Row_Trans, int *csr_Col_Trans, float *csr_Val_Trans, float *correl, float *bwproj, int secSize, int cols, int nnzs){
-	SpMV_start_coalesced(csr_Row_Trans, csr_Col_Trans, csr_Val_Trans, correl, bwproj, secSize, cols, nnzs);
-}
-
-
-__global__ void calcFwProj_brutal(int *csr_Row, int *csr_Col, float *csr_Val, float *f, float *fwproj, int rows){
-	matrix_vector_mul_brutal(csr_Row, csr_Col, csr_Val, f, fwproj, rows);
+__global__ void calcBwProj_coalesced (int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, float *correl, float *bwproj, int secSize, int cols, int nnzs){
+	SpMV_start_coalesced(csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, correl, bwproj, secSize, cols, nnzs);
 }
 
 
-__global__ void calcBwProj_brutal(int *csr_Row_Trans, int *csr_Col_Trans, float *csr_Val_Trans, float *correl, float *bwproj, int cols){
-	matrix_vector_mul_brutal(csr_Row_Trans, csr_Col_Trans, csr_Val_Trans, correl, bwproj, cols);	
+__global__ void calcFwProj_brutal (int *csr_Rows, int *csr_Cols, float *csr_Vals, float *f, float *fwproj, int rows){
+	mat_vec_mul_brutal(csr_Rows, csr_Cols, csr_Vals, f, fwproj, rows);
 }
 
-__global__ void calcFwProj_coalesced_brutal(int *csr_Row, int *csr_Col, float *csr_Val, float *f, float *fwproj){
-	matrix_vector_mul_coalesced_brutal(csr_Row, csr_Col, csr_Val, f, fwproj);
+
+__global__ void calcBwProj_brutal (int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, float *correl, float *bwproj, int cols){
+	mat_vec_mul_brutal(csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, correl, bwproj, cols);	
 }
-__global__ void calcBwProj_coalesced_brutal(int *csr_Row_Trans, int *csr_Col_Trans, float *csr_Val_Trans, float *correl, float *bwproj){
-	matrix_vector_mul_coalesced_brutal(csr_Row_Trans, csr_Col_Trans, csr_Val_Trans, correl, bwproj);
+
+__global__ void calcFwProj_coalesced_brutal_block (int *csr_Rows, int *csr_Cols, float *csr_Vals, float *f, float *fwproj){
+	mat_vec_mul_coalesced_brutal_block (csr_Rows, csr_Cols, csr_Vals, f, fwproj);
 }
+__global__ void calcBwProj_coalesced_brutal_block (int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, float *correl, float *bwproj){
+	mat_vec_mul_coalesced_brutal_block (csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, correl, bwproj);
+}
+
+__global__ void calcFwProj_coalesced_brutal_warp (int *csr_Rows, int *csr_Cols, float *csr_Vals, float *f, float *fwproj, int rows){
+	mat_vec_mul_coalesced_brutal_warp (csr_Rows, csr_Cols, csr_Vals, f, fwproj, rows);
+}
+__global__ void calcBwProj_coalesced_brutal_warp(int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, float *correl, float *bwproj, int cols){
+	mat_vec_mul_coalesced_brutal_warp (csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, correl, bwproj, cols);
+}
+
+
+
+
 
 
 /*
@@ -141,7 +152,7 @@ __global__ void calcBwProj_coalesced_brutal(int *csr_Row_Trans, int *csr_Col_Tra
 	@param rows:			number of rows (equals to length of row array - 1)
 	@param nnzs:			number of nnzs (equals to length of val/col array)
 */
-__device__ void SpMV_start(	int *csr_Row, int *csr_Col, float *csr_Val, float *x, float *result,
+__device__ void SpMV_start(	int *csr_Rows, int *csr_Cols, float *csr_Vals, float *x, float *result,
 							int secSize, int rows, int nnzs) {
 	
 	// !!!  gridsize x blocksize x sectionsize		 >= rows + nnzs
@@ -160,7 +171,7 @@ __device__ void SpMV_start(	int *csr_Row, int *csr_Col, float *csr_Val, float *x
 		j = nextj;
 
 		// find the first coordinate (i, j) that r[i + 1] > j - 1
-		if (csr_Row[i + 1] > j - 1)
+		if (csr_Rows[i + 1] > j - 1)
 			righti = i;
 		else
 			lefti = i + 1;
@@ -176,7 +187,7 @@ __device__ void SpMV_start(	int *csr_Row, int *csr_Col, float *csr_Val, float *x
 		*/
 	}
 
-	SpMV_work(csr_Row, csr_Col, csr_Val, x, result, secSize, rows, nnzs, i, j);
+	SpMV_work(csr_Rows, csr_Cols, csr_Vals, x, result, secSize, rows, nnzs, i, j);
 }
 
 
@@ -186,15 +197,15 @@ __device__ void SpMV_start(	int *csr_Row, int *csr_Col, float *csr_Val, float *x
 	@param j:			y-coordinate of start point
 	other params:		same as SpMV_start
 */
-__device__ void SpMV_work(	int *csr_Row, int *csr_Col, float *csr_Val, float *x, float *result,
+__device__ void SpMV_work(	int *csr_Rows, int *csr_Cols, float *csr_Vals, float *x, float *result,
 							int secSize, int rows, int nnzs, int i, int j) {
 	int end = i + j + secSize;
 	if (end > nnzs + rows)
 		end = nnzs + rows;
 	float rowTimesVector = 0.0f;
 	while (i + j < end) {
-		if (csr_Row[i + 1] > j) {
-			rowTimesVector += csr_Val[j] * x[csr_Col[j]];
+		if (csr_Rows[i + 1] > j) {
+			rowTimesVector += csr_Vals[j] * x[csr_Cols[j]];
 			j++;
 		}
 		else {
@@ -210,7 +221,7 @@ __device__ void SpMV_work(	int *csr_Row, int *csr_Col, float *csr_Val, float *x,
 }
 
 
-__device__ void SpMV_start_coalesced(	int *csr_Row, int *csr_Col, float *csr_Val, float *x, float *result,
+__device__ void SpMV_start_coalesced(	int *csr_Rows, int *csr_Cols, float *csr_Vals, float *x, float *result,
 										int secSize, int rows, int nnzs) {
 
 	int lefti = 0;
@@ -226,7 +237,7 @@ __device__ void SpMV_start_coalesced(	int *csr_Row, int *csr_Col, float *csr_Val
 		j = nextj;
 
 		// find the first coordinate (i, j) that r[i + 1] > j - 1
-		if (csr_Row[i + 1] > j - 1)
+		if (csr_Rows[i + 1] > j - 1)
 			righti = i;
 		else
 			lefti = i + 1;
@@ -235,42 +246,43 @@ __device__ void SpMV_start_coalesced(	int *csr_Row, int *csr_Col, float *csr_Val
 		nextj = start - nexti;
 	}
 
-	SpMV_work_coalesced(csr_Row, csr_Col, csr_Val, x, result, rows, nnzs, i, j);
+	SpMV_work_coalesced(csr_Rows, csr_Cols, csr_Vals, x, result, rows, nnzs, i, j);
 }
 
 
-__device__ void SpMV_work_coalesced(	int *csr_Row, int *csr_Col, float *csr_Val, float *x, float *result,
+__device__ void SpMV_work_coalesced(	int *csr_Rows, int *csr_Cols, float *csr_Vals, float *x, float *result,
 										int rows, int nnzs, int i, int j) {
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 	if (index < nnzs + rows){
 		while (i + j != index) {
-			if (csr_Row[i + 1] > j) 
+			if (csr_Rows[i + 1] > j) 
 				j++;
 			else 
 				i++;
 		}
-		if (csr_Row[i + 1] > j)
-			atomicAdd(result + i, csr_Val[j] * x[csr_Col[j]]);
+		if (csr_Rows[i + 1] > j)
+			atomicAdd(result + i, csr_Vals[j] * x[csr_Cols[j]]);
 	}
 }
 
 
 
-__device__ void matrix_vector_mul_brutal(int *csr_Row, int *csr_Col, float *csr_Val, float *x, float *result, int rows){
+__device__ void mat_vec_mul_brutal(int *csr_Rows, int *csr_Cols, float *csr_Vals, float *x, float *result, int rows){
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 
 	if(index < rows){
-		int start = csr_Row[index];
-		int end   = csr_Row[index+1];
+		int start = csr_Rows[index];
+		int end   = csr_Rows[index+1];
 		float sum = 0.0f; 
 		for(int i = start ; i < end ; i++)
-			sum += csr_Val[i] * x[csr_Col[i]];
+			sum += csr_Vals[i] * x[csr_Cols[i]];
 		
 		result[index] = sum;
 	}	
 }
 
-__device__ void matrix_vector_mul_coalesced_brutal(int *csr_Row, int *csr_Col, float *csr_Val, float *x, float *result){
+
+__device__ void mat_vec_mul_coalesced_brutal_block(int *csr_Rows, int *csr_Cols, float *csr_Vals, float *x, float *result){
 	__shared__ float values[1024];
 	for(int i = 0 ; i < 1024 ; i++)
 		values[i] = 0.0f;
@@ -280,11 +292,11 @@ __device__ void matrix_vector_mul_coalesced_brutal(int *csr_Row, int *csr_Col, f
 	int blockIndex  = blockIdx.x;
 	int dim         = blockDim.x; // 1024
 
-	int start = csr_Row[blockIndex];
-	int end   = csr_Row[blockIndex + 1];
+	int start = csr_Rows[blockIndex];
+	int end   = csr_Rows[blockIndex + 1];
 
 	for(int i = start + threadIndex; i < end ; i += dim)
-		values[threadIndex] += csr_Val[i] * x[csr_Col[i]];
+		values[threadIndex] += csr_Vals[i] * x[csr_Cols[i]];
 
 	__syncthreads();
 	
@@ -295,5 +307,41 @@ __device__ void matrix_vector_mul_coalesced_brutal(int *csr_Row, int *csr_Col, f
 			sum += values[i];
 
 		result[blockIndex] = sum;
+	}
+}
+
+
+__device__ void mat_vec_mul_coalesced_brutal_warp (int *csr_Rows, int *csr_Cols, float *csr_Vals, float *x, float *result, int rows){
+	__shared__ float values[1024];
+
+	int WARP_SIZE = 32;
+
+	int thread_id = blockDim.x * blockIdx.x + threadIdx.x;
+
+	int thread_lane = threadIdx.x & (WARP_SIZE-1); // thread index within the warp
+
+	int warp_id = thread_id / WARP_SIZE; // global warp index
+	// total number of active warps
+	int num_warps = (blockDim.x / WARP_SIZE) * gridDim.x;
+	// one warp per row
+	for (int row = warp_id; row < rows ; row += num_warps){
+		int row_start = csr_Rows[row];
+		int row_end = csr_Rows[row +1];
+		
+		// compute running sum per thread
+		values[threadIdx.x] = 0.0;
+		
+		for (int jj = row_start + thread_lane ; jj < row_end ; jj += WARP_SIZE)
+			values[threadIdx.x] += csr_Vals[jj] * x[csr_Cols[jj]];
+
+		// first thread writes the result
+		if ( thread_lane == 0){
+			for (int i =1 ; i<WARP_SIZE ; i++)
+				values[threadIdx.x] += values[threadIdx.x + i];
+			
+			atomicAdd(&result[row], values[threadIdx.x]);
+		}
+
+		__syncthreads();
 	}
 }

@@ -104,14 +104,22 @@ __global__ void calcUpdateInPlace(float *f, float *norm, float *bwproj, int cols
 	}
 }
 
+__global__ void calcFwProj_coalesced (int *csr_Row, int *csr_Col, float *csr_Val, float *f, float *fwproj, int secSize, int rows, int nnzs) {
+	SpMV_start_coalesced(csr_Row, csr_Col, csr_Val, f, fwproj, secSize, rows, nnzs);
+}
 
-__global__ void calcFwProj_naive(int *csr_Row, int *csr_Col, float *csr_Val, float *f, float *fwproj, int rows){
-	naive_matrix_vector_mul(csr_Row, csr_Col, csr_Val, f, fwproj, rows);
+__global__ void calcBwProj_coalesced (int *csr_Row_Trans, int *csr_Col_Trans, float *csr_Val_Trans, float *correl, float *bwproj, int secSize, int cols, int nnzs){
+	SpMV_start_coalesced(csr_Row_Trans, csr_Col_Trans, csr_Val_Trans, correl, bwproj, secSize, cols, nnzs);
 }
 
 
-__global__ void calcBwProj_naive(int *csr_Row_Trans, int *csr_Col_Trans, float *csr_Val_Trans, float *correl, float *bwproj, int cols){
-	naive_matrix_vector_mul(csr_Row_Trans, csr_Col_Trans, csr_Val_Trans, correl, bwproj, cols);	
+__global__ void calcFwProj_brutal(int *csr_Row, int *csr_Col, float *csr_Val, float *f, float *fwproj, int rows){
+	matrix_vector_mul_brutal(csr_Row, csr_Col, csr_Val, f, fwproj, rows);
+}
+
+
+__global__ void calcBwProj_brutal(int *csr_Row_Trans, int *csr_Col_Trans, float *csr_Val_Trans, float *correl, float *bwproj, int cols){
+	matrix_vector_mul_brutal(csr_Row_Trans, csr_Col_Trans, csr_Val_Trans, correl, bwproj, cols);	
 }
 
 
@@ -195,7 +203,53 @@ __device__ void SpMV_work(	int *csr_Row, int *csr_Col, float *csr_Val, float *x,
 }
 
 
-__device__ void naive_matrix_vector_mul(int *csr_Row, int *csr_Col, float *csr_Val, float *x, float *result, int rows){
+__device__ void SpMV_start_coalesced(	int *csr_Row, int *csr_Col, float *csr_Val, float *x, float *result,
+										int secSize, int rows, int nnzs) {
+
+	int lefti = 0;
+	int righti = rows;
+	int nexti = righti / 2;
+	int index = blockIdx.x;
+	int start = index * secSize;
+	int nextj = start - nexti;
+	int i = 0, j = start;
+
+	while (i != nexti) {
+		i = nexti;
+		j = nextj;
+
+		// find the first coordinate (i, j) that r[i + 1] > j - 1
+		if (csr_Row[i + 1] > j - 1)
+			righti = i;
+		else
+			lefti = i + 1;
+
+		nexti = (lefti + righti) / 2;
+		nextj = start - nexti;
+	}
+
+	SpMV_work_coalesced(csr_Row, csr_Col, csr_Val, x, result, rows, nnzs, i, j);
+}
+
+
+__device__ void SpMV_work_coalesced(	int *csr_Row, int *csr_Col, float *csr_Val, float *x, float *result,
+										int rows, int nnzs, int i, int j) {
+	int index = blockIdx.x * blockDim.x + threadIdx.x;
+	if (index < nnzs + rows){
+		while (i + j != index) {
+			if (csr_Row[i + 1] > j) 
+				j++;
+			else 
+				i++;
+		}
+		if (csr_Row[i + 1] > j)
+			atomicAdd(result + i, csr_Val[j] * x[csr_Col[j]]);
+	}
+}
+
+
+
+__device__ void matrix_vector_mul_brutal(int *csr_Row, int *csr_Col, float *csr_Val, float *x, float *result, int rows){
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 
 	if(index < rows){

@@ -590,21 +590,36 @@ void mlem_test(     int *csr_Rows, int *csr_Cols, float *csr_Vals,
     cudaMemset(cuda_temp, 0, sizeof(float)*rows);
     cudaMemcpy(cuda_f, f, sizeof(float)* cols, cudaMemcpyHostToDevice);
     
+    clock_t initEnd = clock();
+    printf("    End  : Initialization\n");
+    double initTime = ((double) (initEnd - initStart)) / CLOCKS_PER_SEC;
+    printf("    Elapsed time for initialization: %f\n\n", initTime);
+
+
     // Determine grid size and section size (block size is set to 1024 by default)
     int blocksize = 1024;
     int gridsize_correl = ceil((double)rows / blocksize);
     int gridsize_update = ceil((double)cols / blocksize);
     int items_fwproj = rows + nnzs;
     int items_bwproj = cols + nnzs;
-    int gridsize_fwproj = ceil(sqrt((double)items_fwproj / blocksize) * 120); // gridsize_correl; // * 60
-    int gridsize_bwproj = ceil(sqrt((double)items_bwproj / blocksize) * 120); // gridsize_update; // / 15
+
+    /* gridsize:
+            for brutal    : gridsize_correl
+            for coalesced : ceil((double)items / blocksize); 
+            default       : ceil(sqrt((double)items / blocksize))
+            better default: ceil(sqrt((double)items / blocksize)) *60 fw or /15 bw 
+    */
+    int gridsize_fwproj = ceil(sqrt((double)items_fwproj / blocksize)); 
+    int gridsize_bwproj = ceil(sqrt((double)items_bwproj / blocksize));
+
+    /* secsize:
+            for brutal    : not used
+            for coalesced : blocksize, 1024
+            default       : ceil((double)items / (blocksize * gridsize))
+    */
     int secsize_fwproj = ceil((double)items_fwproj / (blocksize * gridsize_fwproj));
     int secsize_bwproj = ceil((double)items_bwproj / (blocksize * gridsize_bwproj));
-
-    clock_t initEnd = clock();
-    printf("    End  : Initialization\n");
-    double initTime = ((double) (initEnd - initStart)) / CLOCKS_PER_SEC;
-    printf("    Elapsed time for initialization: %f\n\n", initTime);
+    
 
     // iterations
     printf("    Begin: Iterations %d\n", iterations);
@@ -612,13 +627,13 @@ void mlem_test(     int *csr_Rows, int *csr_Cols, float *csr_Vals,
     if(brutal == 0)
         for(int i = 0; i < iterations; i++){
             // forward projection
-            calcFwProj_naive <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp, rows);
+            calcFwProj_brutal <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp, rows);
     
             // correlation
             calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
     
             // backward projection
-            calcBwProj_naive <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj, cols);
+            calcBwProj_brutal <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj, cols);
     
             // update, for mlem naive calcUpdateAndClearBwproj should be used
             calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);

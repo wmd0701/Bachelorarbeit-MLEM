@@ -374,182 +374,9 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
 }
 
 
-void mlem_naive(    int *csr_Rows, int *csr_Cols, float *csr_Vals, 
-                    int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, 
-                    int *g, float *norm, float *f, int rows, int cols, int nnzs, int iterations, int device){
-    
-    cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, device);	
-    cudaSetDevice(device);
-    printf("    \nRunning naive MLEM on CUDA device %d (%s)\n\n", device, prop.name);
-    
-    clock_t start = clock();
-    printf("    Begin: Initialization\n");
-    clock_t initStart = clock();
-
-    // halve the matrix
-    int halfrows1 = halfMatrix(csr_Rows, nnzs, rows);
-    int halfrows2 = rows - halfrows1;
-    int halfnnzs1 = csr_Rows[halfrows1];
-    int halfnnzs2 = nnzs - halfnnzs1;
-    int offset = csr_Rows[halfrows1];
-    // printf("First  half matrix contains %d rows and %d nnzs\n", halfrows1, halfnnzs1);
-    // printf("Second half matrix contains %d rows and %d nnzs\n", halfrows2, halfnnzs2);
-    // adjust row array for the second half matrix
-    // TODO: accelerate this adjustment with GPU
-    for(int i = halfrows1+1; i <= rows; i++)
-        csr_Rows[i] -= offset;
-
-    // halve the transposed matrix
-    int halfrows1_trans = halfMatrix(csr_Rows_Trans, nnzs, cols);
-    int halfrows2_trans = cols - halfrows1_trans;
-    int halfnnzs1_trans = csr_Rows_Trans[halfrows1_trans];
-    int halfnnzs2_trans = nnzs - halfnnzs1_trans;
-    int offset_trans = csr_Rows_Trans[halfrows1_trans];
-    // printf("First  half transposed matrix contains %d rows and %d nnzs\n", halfrows1_trans, halfnnzs1_trans);
-    // printf("Second half transposed matrix contains %d rows and %d nnzs\n", halfrows2_trans, halfnnzs2_trans);
-    // adjust row array for the second half matrix
-    // TODO: accelerate this adjustment with GPU
-    for(int i = halfrows1_trans+1; i <= cols; i++)
-        csr_Rows_Trans[i] -= offset_trans;
-
-
-    // device variables
-    int *cuda_Rows, *cuda_Cols, *cuda_Rows_Trans, *cuda_Cols_Trans, *cuda_g;
-    float *cuda_Vals, *cuda_Vals_Trans, *cuda_norm, *cuda_bwproj, *cuda_temp, *cuda_f;
-
-
-    // allocate device storage
-    // printf("    Begin: Allocate GPU Storage\n");
-    int rows_init = halfrows1 > halfrows2 ? halfrows1 : halfrows2;
-    int nnzs_init = halfnnzs1 > halfnnzs2 ? halfnnzs1 : halfnnzs2;
-    int rows_init_trans = halfrows1_trans > halfrows2_trans ? halfrows1_trans : halfrows2_trans;
-    int nnzs_init_trans = halfnnzs1_trans > halfnnzs2_trans ? halfnnzs1_trans : halfnnzs2_trans;
-
-    cudaMalloc((void**)&cuda_Rows, sizeof(int)*(rows_init + 1));
-    cudaMalloc((void**)&cuda_Cols, sizeof(int)*nnzs_init);
-    cudaMalloc((void**)&cuda_Vals, sizeof(float)*nnzs_init);
-    cudaMalloc((void**)&cuda_Rows_Trans, sizeof(int)*(rows_init_trans + 1));
-    cudaMalloc((void**)&cuda_Cols_Trans, sizeof(int)*nnzs_init_trans);
-    cudaMalloc((void**)&cuda_Vals_Trans, sizeof(float)*nnzs_init_trans);
-    cudaMalloc((void**)&cuda_f, sizeof(float)*cols);
-    cudaMalloc((void**)&cuda_g, sizeof(int)*rows);
-    cudaMalloc((void**)&cuda_norm, sizeof(float)*cols);
-    cudaMalloc((void**)&cuda_bwproj, sizeof(float)*cols);
-    cudaMalloc((void**)&cuda_temp, sizeof(float)*rows);
-    // printf("    End  : Allocate GPU Storage\n");
-
-    // value initialization
-    // printf("    Begin: GPU Storage Initialization\n");
-    cudaMemcpy(cuda_g, g, sizeof(int)* rows, cudaMemcpyHostToDevice);
-    cudaMemcpy(cuda_norm, norm, sizeof(float)* cols, cudaMemcpyHostToDevice);
-    cudaMemset(cuda_bwproj, 0, sizeof(float)*cols);
-    cudaMemset(cuda_temp, 0, sizeof(float)*rows);
-    // cudaMemset(cuda_f, init, sizeof(float)*cols);
-    // cuMemsetD32(cuda_f, __float_as_int(init), cols);
-    cudaMemcpy(cuda_f, f, sizeof(float)* cols, cudaMemcpyHostToDevice);
-    cudaMemset(cuda_Rows_Trans, 0, sizeof(int)*(cols+1));
-    cudaMemset(cuda_Cols_Trans, 0, sizeof(int)*nnzs);
-    cudaMemset(cuda_Vals_Trans, 0, sizeof(float)*nnzs);
-    // printf("    End  : GPU Storage Initialization\n");
-
-    
-    // Determine grid size and section size (block size is set to 1024 by default)
-    int blocksize = 1024;
-    int gridsize_correl = ceil((double)rows / blocksize);
-    int gridsize_update = ceil((double)cols / blocksize);
-    int items_fwproj1 = halfrows1 + halfnnzs1;
-    int items_fwproj2 = halfrows2 + halfnnzs1;
-    int items_bwproj1 = halfrows1_trans + halfnnzs1_trans;
-    int items_bwproj2 = halfrows2_trans + halfnnzs2_trans;
-    int gridsize_fwproj1 = ceil(sqrt((double)items_fwproj1 / blocksize));
-    int gridsize_fwproj2 = ceil(sqrt((double)items_fwproj2 / blocksize));
-    int gridsize_bwproj1 = ceil(sqrt((double)items_bwproj1 / blocksize));
-    int gridsize_bwproj2 = ceil(sqrt((double)items_bwproj2 / blocksize));
-    int secsize_fwproj1 = ceil((double)items_fwproj1 / (blocksize * gridsize_fwproj1));
-    int secsize_fwproj2 = ceil((double)items_fwproj2 / (blocksize * gridsize_fwproj2));
-    int secsize_bwproj1 = ceil((double)items_bwproj1 / (blocksize * gridsize_bwproj1));
-    int secsize_bwproj2 = ceil((double)items_bwproj2 / (blocksize * gridsize_bwproj2));
-
-    clock_t initEnd = clock();
-    printf("    End  : Initialization\n");
-    double initTime = ((double) (initEnd - initStart)) / CLOCKS_PER_SEC;
-    printf("    Elapsed time for initialization: %f\n\n", initTime);
-    
-    // iterations
-    printf("    Begin: Iterations %d\n", iterations);
-    clock_t iterStart = clock();
-    for(int i = 0; i < iterations; i++){
-        // forward projection for first half matrix
-        csr_Rows[halfrows1] = offset;
-        cudaMemcpy(cuda_Rows, csr_Rows, sizeof(int)*(halfrows1 + 1), cudaMemcpyHostToDevice);
-        cudaMemcpy(cuda_Cols, csr_Cols, sizeof(int)* halfnnzs1, cudaMemcpyHostToDevice);
-        cudaMemcpy(cuda_Vals, csr_Vals, sizeof(float)* halfnnzs1, cudaMemcpyHostToDevice);
-        calcFwProj <<< gridsize_fwproj1, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp, secsize_fwproj1, halfrows1, halfnnzs1);
-
-        // forward projection for second half matrix
-        csr_Rows[halfrows1] = 0;
-        cudaMemcpy(cuda_Rows, csr_Rows+halfrows1, sizeof(int)*(halfrows2 + 1), cudaMemcpyHostToDevice);
-        cudaMemcpy(cuda_Cols, csr_Cols+halfnnzs1, sizeof(int)* halfnnzs2, cudaMemcpyHostToDevice);
-        cudaMemcpy(cuda_Vals, csr_Vals+halfnnzs1, sizeof(float)* halfnnzs2, cudaMemcpyHostToDevice);
-        calcFwProj <<< gridsize_fwproj2, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp+halfrows1, secsize_fwproj2, halfrows2, halfnnzs2);
-        
-        // correlation
-        calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
-
-        // backward projection for first half transposed matrix
-        csr_Rows_Trans[halfrows1_trans] = offset_trans;
-        cudaMemcpy(cuda_Rows_Trans, csr_Rows_Trans, sizeof(int)*(halfrows1_trans + 1), cudaMemcpyHostToDevice);
-        cudaMemcpy(cuda_Cols_Trans, csr_Cols_Trans, sizeof(int)* halfnnzs1_trans, cudaMemcpyHostToDevice);
-        cudaMemcpy(cuda_Vals_Trans, csr_Vals_Trans, sizeof(float)* halfnnzs1_trans, cudaMemcpyHostToDevice);
-        calcBwProj <<< gridsize_bwproj1, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj, secsize_bwproj1, halfrows1_trans, halfnnzs1_trans);
-
-        // backward projection for second half transposed matrix
-        csr_Rows_Trans[halfrows1_trans] = 0;
-        cudaMemcpy(cuda_Rows_Trans, csr_Rows_Trans+halfrows1_trans, sizeof(int)*(halfrows2_trans + 1), cudaMemcpyHostToDevice);
-        cudaMemcpy(cuda_Cols_Trans, csr_Cols_Trans+halfnnzs1_trans, sizeof(int)* halfnnzs2_trans, cudaMemcpyHostToDevice);
-        cudaMemcpy(cuda_Vals_Trans, csr_Vals_Trans+halfnnzs1_trans, sizeof(float)* halfnnzs2_trans, cudaMemcpyHostToDevice);
-        calcBwProj <<< gridsize_bwproj2, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj+halfrows1_trans, secsize_bwproj2, halfrows2_trans, halfnnzs2_trans);
-        
-        // update, for mlem naive calcUpdateAndClearBwproj should be used
-        calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
-        
-        // clear cuda_temp and cuda_bwproj
-        cudaMemset(cuda_temp,   0, sizeof(float)*rows);
-        cudaMemset(cuda_bwproj, 0, sizeof(float)*cols); 
-    }
-    cudaDeviceSynchronize();
-    clock_t iterEnd = clock();
-    printf("    End  : Iterations %d\n", iterations);
-    double itertime = ((double) (iterEnd - iterStart)) / CLOCKS_PER_SEC;
-    printf("    Elapsed time for iterations: %f\n\n", itertime);
-
-    // Result is copied to f
-    cudaMemcpy(f, cuda_f, sizeof(float)*cols, cudaMemcpyDeviceToHost);
-
-    // free all memory
-    if(cuda_Rows) cudaFree(cuda_Rows);
-    if(cuda_Cols) cudaFree(cuda_Cols);
-    if(cuda_Vals) cudaFree(cuda_Vals);
-    if(cuda_Rows_Trans) cudaFree(cuda_Rows_Trans);
-    if(cuda_Cols_Trans) cudaFree(cuda_Cols_Trans);
-    if(cuda_Vals_Trans) cudaFree(cuda_Vals_Trans);
-    if(cuda_g) cudaFree(cuda_g);
-    if(cuda_norm) cudaFree(cuda_norm);
-    if(cuda_f) cudaFree(cuda_f);
-    if(cuda_bwproj) cudaFree(cuda_bwproj);
-    if(cuda_temp) cudaFree(cuda_temp);
-    
-
-    clock_t end = clock();
-    double totaltime = ((double) (end - start)) / CLOCKS_PER_SEC;
-    printf("    Elapsed time totally       : %f\n\n", totaltime);
-}
-
-
 void mlem_test(     int *csr_Rows, int *csr_Cols, float *csr_Vals, 
                     int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, 
-                    int *g, float *norm, float *f, int rows, int cols, int nnzs, int iterations, int device, int brutal){
+                    int *g, float *norm, float *f, int rows, int cols, int nnzs, int iterations, int device, int matrix_vector_mul){
 
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, device);	
@@ -600,66 +427,82 @@ void mlem_test(     int *csr_Rows, int *csr_Cols, float *csr_Vals,
     int blocksize = 1024;
     int gridsize_correl = ceil((double)rows / blocksize);
     int gridsize_update = ceil((double)cols / blocksize);
-    int items_fwproj = rows + nnzs;
-    int items_bwproj = cols + nnzs;
-
-    /* gridsize:
-            for brutal    : gridsize_correl
-            for coalesced : ceil((double)items / blocksize); 
-            default       : ceil(sqrt((double)items / blocksize))
-            better default: ceil(sqrt((double)items / blocksize)) *60 fw or /15 bw 
-    */
-    int gridsize_fwproj = ceil(sqrt((double)items_fwproj / blocksize)); 
-    int gridsize_bwproj = ceil(sqrt((double)items_bwproj / blocksize));
-
-    /* secsize:
-            for brutal    : not used
-            for coalesced : blocksize, 1024
-            default       : ceil((double)items / (blocksize * gridsize))
-    */
-    int secsize_fwproj = ceil((double)items_fwproj / (blocksize * gridsize_fwproj));
-    int secsize_bwproj = ceil((double)items_bwproj / (blocksize * gridsize_bwproj));
-    
 
     // iterations
     printf("    Begin: Iterations %d\n", iterations);
     clock_t iterStart = clock();
-    if(brutal == 0)
-        for(int i = 0; i < iterations; i++){
-            // forward projection
-            calcFwProj_brutal <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp, rows);
     
-            // correlation
-            calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
-    
-            // backward projection
-            calcBwProj_brutal <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj, cols);
-    
-            // update, for mlem naive calcUpdateAndClearBwproj should be used
-            calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
-    
-            // clear cuda_temp and cuda_bwproj
-            // cudaMemset(cuda_temp,   0, sizeof(float)*rows);
-            // cudaMemset(cuda_bwproj, 0, sizeof(float)*cols); 
-        }
-    else
-        for(int i = 0; i < iterations; i++){
-            // forward projection
-            calcFwProj <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp, secsize_fwproj, rows, nnzs);
+    switch(matrix_vector_mul){
+        case 0: { // case 0: CSRMV
+            int items_fwproj = rows + nnzs;
+            int items_bwproj = cols + nnzs;
+            int gridsize_fwproj = ceil(sqrt((double)items_fwproj / blocksize) * 60); 
+            int gridsize_bwproj = ceil(sqrt((double)items_bwproj / blocksize) * 15);
+            int secsize_fwproj = ceil((double)items_fwproj / (blocksize * gridsize_fwproj));
+            int secsize_bwproj = ceil((double)items_bwproj / (blocksize * gridsize_bwproj));
             
-            // correlation
-            calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
-    
-            // backward projection
-            calcBwProj <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj, secsize_bwproj, cols, nnzs);
-            
-            // update, for mlem naive calcUpdateAndClearBwproj should be used
-            calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
-    
-            // clear cuda_temp and cuda_bwproj
-            cudaMemset(cuda_temp,   0, sizeof(float)*rows);
-            cudaMemset(cuda_bwproj, 0, sizeof(float)*cols);     
-        }
+            for(int i = 0; i < iterations; i++){
+                calcFwProj <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp, secsize_fwproj, rows, nnzs);
+                
+                calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
+        
+                calcBwProj <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj, secsize_bwproj, cols, nnzs);
+                
+                calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
+        
+                cudaMemset(cuda_temp,   0, sizeof(float)*rows);
+                cudaMemset(cuda_bwproj, 0, sizeof(float)*cols);     
+            }
+        } break;
+
+        case 1: { //case 1: brutal
+            int gridsize_fwproj = gridsize_correl;
+            int gridsize_bwproj = gridsize_update;
+            for(int i = 0; i < iterations; i++){
+                calcFwProj_brutal <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp, rows);
+        
+                calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
+        
+                calcBwProj_brutal <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj, cols);
+        
+                calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
+            } 
+        } break;
+
+        case 2: { // case 2: coalesced CSRMV
+            int items_fwproj = rows + nnzs;
+            int items_bwproj = cols + nnzs;
+            int gridsize_fwproj = ceil((double)items_fwproj / blocksize); 
+            int gridsize_bwproj = ceil((double)items_bwproj / blocksize);
+            for(int i = 0; i < iterations; i++){
+                calcFwProj_coalesced <<< gridsize_fwproj, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp, blocksize, rows, nnzs);
+                
+                calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
+        
+                calcBwProj_coalesced <<< gridsize_bwproj, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj, blocksize, cols, nnzs);
+                
+                calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
+        
+                cudaMemset(cuda_temp,   0, sizeof(float)*rows);
+                cudaMemset(cuda_bwproj, 0, sizeof(float)*cols);     
+            }
+        } break;
+
+        case 3: { // case 3: coalesced brutal
+            for(int i = 0; i < iterations; i++){
+                calcFwProj_coalesced_brutal <<< rows, blocksize >>> (cuda_Rows, cuda_Cols, cuda_Vals, cuda_f, cuda_temp);
+        
+                calcCorrel <<< gridsize_correl, blocksize >>> (cuda_g, cuda_temp, rows);
+        
+                calcBwProj_coalesced_brutal <<< cols, blocksize >>> (cuda_Rows_Trans, cuda_Cols_Trans, cuda_Vals_Trans, cuda_temp, cuda_bwproj);
+        
+                calcUpdateInPlace <<< gridsize_update, blocksize >>> (cuda_f, cuda_norm, cuda_bwproj, cols);
+            } 
+        } break;
+
+        default: break;
+    }
+        
     cudaDeviceSynchronize();
     clock_t iterEnd = clock();
     printf("    End  : Iterations %d\n", iterations);
@@ -693,24 +536,24 @@ int main(){
     int iterations = 300;
     // 0: test mlem    1: naive mlme    other ints: nccl mlem
     int MLEM_Version = 1;
-    // 0: using small matrix     other ints: using big matrix
+    // 0: using small matrix   1: using big matrix
     int small = 0;
     // 0: Quadro P6000 1: Tesla K20c
     int device = 0;
-    // 0: using brutal matrix-vector multiplication    other ints: using NVIDIA sparse matrix-vector multiplication
-    int brutal = 0;
+    // 0: CSRMV    1: brutal   2: coalesced CSRMV   3: coalesced brutal 
+    int matrix_vector_mul = 0;
 
     printf("\nIteration times: ");
     int result = scanf("%d", &iterations);
-    printf("\nMLEM version (0: test version   1: naive version   others: nccl version): ");
+    printf("\nMLEM version (0: test version   1: nccl version): ");
     result = scanf("%d", &MLEM_Version);
-    printf("\nUsing small matrix? (0: yes   others: no): ");
+    printf("\nUse which matrix? (0: small matrix   1: big matrix): ");
     result = scanf("%d", &small);
     if(MLEM_Version == 0 || MLEM_Version == 1){
-        printf("\nUsing device (0: Quadro P6000   1: Tesla K20c): ");
+        printf("\nUse which device? (0: Quadro P6000   1: Tesla K20c): ");
         result = scanf("%d", &device);
-        printf("\nUsing brutal matrix-vector multiplication? (0: yes   others: no): ");
-        result = scanf("%d", &brutal);
+        printf("\nUse which kind of matrix-vector multiplication? (0: CSRMV   1: brutal   2: coalesced CSRMV   3: coalesced brutal): ");
+        result = scanf("%d", &matrix_vector_mul);
     }
     printf("\n");
 
@@ -800,9 +643,9 @@ int main(){
     printf("\n***********************************************\n");
     printf("Begin: Run MLEM for %d iterations\n", iterations);
     switch(MLEM_Version){
-        case 0: mlem_test(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs, iterations, device, brutal); break;
-        case 1: mlem_naive(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs, iterations, device); break;
-        default: mlem_nccl(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs, iterations); break;
+        case 0: mlem_test(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs, iterations, device, matrix_vector_mul); break;
+        case 1: mlem_nccl(csr_Rows, csr_Cols, csr_Vals, csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, g, norm, f, rows, cols, nnzs, iterations); break;
+        default: break;
     }
     printf("End  : Run MLEM for %d iterations\n", iterations);
     printf("***********************************************\n");

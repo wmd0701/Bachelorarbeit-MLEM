@@ -100,7 +100,7 @@ __global__ void calcUpdateInPlace(float *f, float *norm, float *bwproj, int cols
 		else
 			f[index] = f[index] * bwproj[index] / norm[index];
 		
-		bwproj[index] = 0.0f;
+		// bwproj[index] = 0.0f;
 	}
 }
 
@@ -120,6 +120,13 @@ __global__ void calcFwProj_brutal(int *csr_Row, int *csr_Col, float *csr_Val, fl
 
 __global__ void calcBwProj_brutal(int *csr_Row_Trans, int *csr_Col_Trans, float *csr_Val_Trans, float *correl, float *bwproj, int cols){
 	matrix_vector_mul_brutal(csr_Row_Trans, csr_Col_Trans, csr_Val_Trans, correl, bwproj, cols);	
+}
+
+__global__ void calcFwProj_coalesced_brutal(int *csr_Row, int *csr_Col, float *csr_Val, float *f, float *fwproj){
+	matrix_vector_mul_coalesced_brutal(csr_Row, csr_Col, csr_Val, f, fwproj);
+}
+__global__ void calcBwProj_coalesced_brutal(int *csr_Row_Trans, int *csr_Col_Trans, float *csr_Val_Trans, float *correl, float *bwproj){
+	matrix_vector_mul_coalesced_brutal(csr_Row_Trans, csr_Col_Trans, csr_Val_Trans, correl, bwproj);
 }
 
 
@@ -261,4 +268,32 @@ __device__ void matrix_vector_mul_brutal(int *csr_Row, int *csr_Col, float *csr_
 		
 		result[index] = sum;
 	}	
+}
+
+__device__ void matrix_vector_mul_coalesced_brutal(int *csr_Row, int *csr_Col, float *csr_Val, float *x, float *result){
+	__shared__ float values[1024];
+	for(int i = 0 ; i < 1024 ; i++)
+		values[i] = 0.0f;
+	__syncthreads();
+
+	int threadIndex = threadIdx.x;
+	int blockIndex  = blockIdx.x;
+	int dim         = blockDim.x; // 1024
+
+	int start = csr_Row[blockIndex];
+	int end   = csr_Row[blockIndex + 1];
+
+	for(int i = start + threadIndex; i < end ; i += dim)
+		values[threadIndex] += csr_Val[i] * x[csr_Col[i]];
+
+	__syncthreads();
+	
+	if(threadIndex == 0){
+		float sum = 0.0f;
+	
+		for(int i = 0 ; i < 1024 ; i++)
+			sum += values[i];
+
+		result[blockIndex] = sum;
+	}
 }

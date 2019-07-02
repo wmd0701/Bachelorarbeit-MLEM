@@ -596,8 +596,8 @@ void mlem_test(     int *csr_Rows, int *csr_Cols, float *csr_Vals,
     int gridsize_update = ceil((double)cols / blocksize);
     int items_fwproj = rows + nnzs;
     int items_bwproj = cols + nnzs;
-    int gridsize_fwproj = ceil(sqrt((double)items_fwproj / blocksize) * 30); // gridsize_correl;
-    int gridsize_bwproj = ceil(sqrt((double)items_bwproj / blocksize) * 30); // gridsize_update;
+    int gridsize_fwproj = ceil(sqrt((double)items_fwproj / blocksize) * 120); // gridsize_correl; // * 60
+    int gridsize_bwproj = ceil(sqrt((double)items_bwproj / blocksize) * 120); // gridsize_update; // / 15
     int secsize_fwproj = ceil((double)items_fwproj / (blocksize * gridsize_fwproj));
     int secsize_bwproj = ceil((double)items_bwproj / (blocksize * gridsize_bwproj));
 

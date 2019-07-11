@@ -31,6 +31,10 @@ __global__ void calcFwProj_coalesced_brutal_warp(int *csr_Rows, int *csr_Cols, f
 __global__ void calcBwProj_coalesced_brutal_warp(int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, float *correl, float *bwproj, int cols);
 
 
+// backward projection using no transposed matrix
+__global__ void calcBwProj_none_trans(int *csr_Rows, int *csr_Cols, float *csr_Vals, float *correl, float *bwproj, int rows);
+
+
 
 
 // matrix-vector multiplication using merge-based CSRMV
@@ -51,4 +55,8 @@ __device__ void mat_vec_mul_coalesced_brutal_block(int *csr_Rows, int *csr_Cols,
 // coalesced brutal version matrix-vector multiplication, totally same with the master thesis from last year
 // each warp calculates one row in matrix multiplied with the vector
 __device__ void mat_vec_mul_coalesced_brutal_warp(int *csr_Rows, int *csr_Cols, float *csr_Vals, float *x, float *result, int rows);
+
+// backward projection help function for using none transposed matrix
+__device__ void trans_mat_vec_mul_warp(int *csr_Rows, int *csr_Cols, float *csr_Vals, float *x, float *result, int rows);
+
 #endif

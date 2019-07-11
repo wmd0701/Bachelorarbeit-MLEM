@@ -74,7 +74,7 @@ __global__ void calcUpdate(float *f, float *norm, float *bwproj, int cols) {
 
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 	if (index < cols) {
-		if(norm[index] == 0)
+		if(norm[index] == 0.0f)
 			bwproj[index] = f[index] * bwproj[index];
 		else
 			bwproj[index] = f[index] * bwproj[index] / norm[index];
@@ -132,8 +132,13 @@ __global__ void calcBwProj_coalesced_brutal_block (int *csr_Rows_Trans, int *csr
 __global__ void calcFwProj_coalesced_brutal_warp (int *csr_Rows, int *csr_Cols, float *csr_Vals, float *f, float *fwproj, int rows){
 	mat_vec_mul_coalesced_brutal_warp (csr_Rows, csr_Cols, csr_Vals, f, fwproj, rows);
 }
+
 __global__ void calcBwProj_coalesced_brutal_warp(int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, float *correl, float *bwproj, int cols){
 	mat_vec_mul_coalesced_brutal_warp (csr_Rows_Trans, csr_Cols_Trans, csr_Vals_Trans, correl, bwproj, cols);
+}
+
+__global__ void calcBwProj_none_trans(int *csr_Rows, int *csr_Cols, float *csr_Vals, float *correl, float *bwproj, int rows){
+	trans_mat_vec_mul_warp(csr_Rows, csr_Cols, csr_Vals, correl, bwproj, rows);
 }
 
 
@@ -326,7 +331,7 @@ __device__ void mat_vec_mul_coalesced_brutal_warp (int *csr_Rows, int *csr_Cols,
 	// one warp per row
 	for (int row = warp_id; row < rows ; row += num_warps){
 		int row_start = csr_Rows[row];
-		int row_end = csr_Rows[row +1];
+		int row_end = csr_Rows[row + 1];
 		
 		// compute running sum per thread
 		values[threadIdx.x] = 0.0;
@@ -335,13 +340,33 @@ __device__ void mat_vec_mul_coalesced_brutal_warp (int *csr_Rows, int *csr_Cols,
 			values[threadIdx.x] += csr_Vals[jj] * x[csr_Cols[jj]];
 
 		// first thread writes the result
-		if ( thread_lane == 0){
-			for (int i =1 ; i<WARP_SIZE ; i++)
+		if (thread_lane == 0){
+			for (int i = 1 ; i < WARP_SIZE ; i++)
 				values[threadIdx.x] += values[threadIdx.x + i];
 			
-			atomicAdd(&result[row], values[threadIdx.x]);
+			atomicAdd(result + row, values[threadIdx.x]);
 		}
 
 		__syncthreads();
+	}
+}
+
+
+__device__ void trans_mat_vec_mul_warp(int *csr_Rows, int *csr_Cols, float *csr_Vals, float *x, float *result, int rows){
+
+	int WARP_SIZE = 32;
+
+	int thread_id = blockDim.x * blockIdx.x + threadIdx.x;
+
+	int thread_lane = threadIdx.x & (WARP_SIZE-1); // thread index within the warp
+
+	int warp_id = thread_id / WARP_SIZE; // global warp index
+	// total number of active warps
+	int num_warps = (blockDim.x / WARP_SIZE) * gridDim.x;
+	for(int row = warp_id; row < rows ; row += num_warps){
+		int row_start = csr_Rows[row];
+		int row_end   = csr_Rows[row + 1];
+		for (int i= row_start + thread_lane; i < row_end; i += WARP_SIZE)
+			atomicAdd(&result[csr_Cols[i]], csr_Vals[i] * x[row]);
 	}
 }

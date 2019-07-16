@@ -1,0 +1,12 @@
+#/bin/bash
+
+for gpu in {2..8}
+do
+        for i in {1..50}
+        do
+                nvprof --log-file ./result/16g.$gpu.trans.coalesced.$i.txt ./test /home/ga39pid2/mlem-data/madpet2.p016.csr4 /home/ga39pid2/mlem-data/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 $gpu 5 5 1 1
+                nvprof --log-file ./result/16g.$gpu.trans.csrmv.$i.txt ./test /home/ga39pid2/mlem-data/madpet2.p016.csr4 /home/ga39pid2/mlem-data/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 $gpu 5 5 1 0
+                nvprof --log-file ./result/16g.$gpu.non-trans.coalesced.$i.txt ./test /home/ga39pid2/mlem-data/madpet2.p016.csr4 /home/ga39pid2/mlem-data/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 $gpu 5 5 1 1 1
+                nvprof --log-file ./result/16g.$gpu.non-trans.csrmv.$i.txt ./test /home/ga39pid2/mlem-data/madpet2.p016.csr4 /home/ga39pid2/mlem-data/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 $gpu 5 5 1 1 0
+        done
+done

@@ -83,13 +83,13 @@ void calcColumnSums(const Csr4Matrix& matrix, Vector<float>& norm)
     number of nnzs in segment i: csr_Rows[segments[i+1]] - csr_Rows[segments[i]] (saved in segment_nnzs)
     offset when copying from host to device: csr_Rows[segments[i]] (saved in offsets)
 */
-void partitionMatrix(int *csr_Rows, int nnzs, int rows, int device_numbers, int *segments, int *segment_rows, int *segment_nnzs, int *offsets){
+void partitionMatrix(int *csr_Rows, unsigned long nnzs, int rows, int device_numbers, int *segments, int *segment_rows, int *segment_nnzs, int *offsets){
     segments[0] = 0;
     segments[device_numbers] = rows;
     int i = 0;
-    int nnzs_per_segment = nnzs / device_numbers;
+    int nnzs_per_segment = (int)(nnzs / device_numbers);
     for(int segment = 1; segment < device_numbers; segment++){
-        for(; i <= rows; i++)
+        for(; i <= rows; i += 1)
             if(csr_Rows[i] >= nnzs_per_segment * segment)
                 break;
         segments[segment] = i;
@@ -103,7 +103,8 @@ void partitionMatrix(int *csr_Rows, int nnzs, int rows, int device_numbers, int 
 
 
 void mlem_nccl_none_trans(  int *csr_Rows, int *csr_Cols, float *csr_Vals, int *g, float *norm, float *f, float *result_f, 
-                            int rows, int cols, int nnzs, int iterations, int device_numbers, int matrix_vector_mul, int secsize_fw){
+                            int rows, int cols, unsigned long nnzs, 
+                            int iterations, int device_numbers, int matrix_vector_mul, int secsize_fw){
     
     // partition matrix
     int *segments = (int*)malloc((device_numbers+1)*sizeof(int));
@@ -302,14 +303,14 @@ void mlem_nccl_none_trans(  int *csr_Rows, int *csr_Cols, float *csr_Vals, int *
     }
 
     // Result is copied to f from device 0, actually now all devices hold the same result
-    /*
+    
         cudaSetDevice(0);
         cudaMemcpy(result_f, cuda_f[0], sizeof(float)*cols, cudaMemcpyDeviceToHost);
         float sum = 0;
-        for(int i = 0; i < cols; i++)
+        for(unsigned long i = 0; i < cols; i += 1)
             sum += result_f[i];
         printf("\nSum f: %f\n\n", sum);
-    */
+    
 
     // free all memory
     for(int i = 0; i < device_numbers; i++){
@@ -350,7 +351,7 @@ void mlem_nccl_none_trans(  int *csr_Rows, int *csr_Cols, float *csr_Vals, int *
 
 void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
                 int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, 
-                int *g, float *norm, float *f, float *result_f, int rows, int cols, int nnzs,
+                int *g, float *norm, float *f, float *result_f, int rows, int cols, unsigned long nnzs,
                 int iterations, int device_numbers, int matrix_vector_mul, int secsize_fw, int secsize_bw){
     
     // partition matrix
@@ -603,14 +604,14 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
     }
 
     // Result is copied to f from device 0, actually now all devices hold the same result
-    /*
+    
         cudaSetDevice(0);
         cudaMemcpy(result_f, cuda_f[0], sizeof(float)*cols, cudaMemcpyDeviceToHost);
         float sum = 0;
-        for(int i = 0; i < cols; i++)
+        for(unsigned long i = 0; i < cols; i += 1)
             sum += result_f[i];
         printf("\nSum f: %f\n\n", sum);
-    */
+    
 
     // free all memory
     for(int i = 0; i < device_numbers; i++){
@@ -675,6 +676,7 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
     ./test /scratch/pet/madpet2.p016.csr4.small /scratch/pet/Trues_Derenzo_GATE_rot_sm_200k.LMsino.small 500 2 3 9 1 0
     ./test /scratch/pet/madpet2.p016.csr4.small /scratch/pet/Trues_Derenzo_GATE_rot_sm_200k.LMsino.small 500 2 3 9 0 1
     ./test /scratch/pet/madpet2.p016.csr4.small /scratch/pet/Trues_Derenzo_GATE_rot_sm_200k.LMsino.small 500 2 5 5 1 1
+    ./test /scratch/pet/madpet2.p016.csr4 /scratch/pet/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 1 5 5 1 1
 */
 int main(int argc, char **argv){
     if(argc < 9){
@@ -690,10 +692,12 @@ int main(int argc, char **argv){
     int secsize_bw          = strtol(argv[6], NULL, 10);
     int using_trans         = strtol(argv[7], NULL, 10);
     int matrix_vector_mul   = strtol(argv[8], NULL, 10);
+    /*
     if(device_numbers < 2){
         printf("Less than 2 GPUs are used! Program exits!\n");
         return 0;
     }
+    */
     int device_numbers_available = 0;
     cudaGetDeviceCount(&device_numbers_available);
     if(device_numbers_available < device_numbers){
@@ -702,8 +706,10 @@ int main(int argc, char **argv){
     }
 
     // host variables
-    int *csr_Rows, *csr_Cols, *csr_Rows_Trans, *csr_Cols_Trans, *g, rows, cols, nnzs, sum_g = 0;
+    int *csr_Rows, *csr_Cols, *csr_Rows_Trans, *csr_Cols_Trans, *g, sum_g = 0, rows, cols;
+    unsigned long nnzs;
     float *csr_Vals, *csr_Vals_Trans, *f, *result_f, *norm, sum_norm = 0.0f;
+
 
     // read matrix
     Csr4Matrix matrix(matrixPath);

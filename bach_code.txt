@@ -10,3 +10,12 @@ do
                 nvprof --log-file ./result/16g.$gpu.non-trans.csrmv.$i.txt ./test /home/ga39pid2/mlem-data/madpet2.p016.csr4 /home/ga39pid2/mlem-data/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 $gpu 5 5 1 1 0
         done
 done
+
+
+
+for secsize in {2,4,6,8,10,12,14,16,18,20}
+do
+        nvprof --log-file ./result/16g.bw5.fw$secsize.txt ./test (matrix) (image) 500 2 $secsize 5 0 0
+        nvprof --log-file ./result/16g.fw5.bw$secsize.txt ./test (matrix) (image) 500 2 5 $secsize 0 0    
+done
+

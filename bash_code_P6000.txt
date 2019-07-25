@@ -1,0 +1,5 @@
+#/bin/bash
+for i in {1..10}
+do
+        nvprof --log-file ./result/P6000.non-trans.merge.$i.txt ./test /scratch/pet/madpet2.p016.csr4.small /scratch/pet/Trues_Derenzo_GATE_rot_sm_200k.LMsino.small 500 2 5 5 1 0
+done

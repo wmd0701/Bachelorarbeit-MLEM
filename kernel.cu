@@ -13,8 +13,8 @@
 	@param rows:			number of rows (equals to length of row array - 1)
 	@param nnzs:			number of nnzs (equals to length of val/col array)
 */
-__global__ void calcFwProj(	int *csr_Rows, int *csr_Cols, float *csr_Vals, float *f, float *fwproj, 
-							int secSize, int rows, int nnzs) {
+__global__ void calcFwProj_merge_based(	int *csr_Rows, int *csr_Cols, float *csr_Vals, float *f, float *fwproj, 
+										int secSize, int rows, int nnzs) {
 	
 	// !!!  gridsize x blocksize x sectionsize		 >= rows + nnzs
 	// !!! (gridsize x blocksize - 1) x sectionsize  <  rows + nnzs
@@ -51,8 +51,8 @@ __global__ void calcCorrel(int *g, float *fwproj, int rows) {
 	@param cols:			number of rows of transposed matrix (columns of original matrix)
 	@param nnzs:			number of nnzs (equals to length of val/col array)
 */
-__global__ void calcBwProj(	int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, float *correl, float *bwproj,
-							int secSize, int cols, int nnzs){
+__global__ void calcBwProj_merge_based(	int *csr_Rows_Trans, int *csr_Cols_Trans, float *csr_Vals_Trans, float *correl, float *bwproj,
+										int secSize, int cols, int nnzs){
 
 	// !!!  gridsize x blocksize x sectionsize		>= cols + nnzs
 	// !!! (gridsize x blocksize - 1) x sectionsize <  cols + nnzs

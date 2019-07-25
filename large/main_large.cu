@@ -5,7 +5,7 @@
 #include "stdlib.h"
 #include "string.h"
 #include "math.h"
-#include "kernel.cuh"
+#include "kernel_large.cuh"
 #include "cusparse.h"
 #include "csr4matrix.hpp"
 #include "vector.hpp"
@@ -87,17 +87,22 @@ void partitionMatrix(unsigned long *csr_Rows, unsigned long nnzs, unsigned int r
     segments[0] = 0;
     segments[device_numbers] = rows;
     unsigned int i = 0;
-    unsigned int nnzs_per_segment = (unsigned int)(nnzs / device_numbers);
-    for(unsigned int segment = 1; segment < device_numbers; segment++){
-        for(; i <= rows; i += 1)
-            if(csr_Rows[i] >= nnzs_per_segment * segment)
+    double nnzs_per_segment = ((double)nnzs / (double)device_numbers);
+    for(unsigned int segment = 0; segment < device_numbers; segment++){
+        int sum = 0;
+        for(; i <= rows; i += 1){
+            if(csr_Rows[i] > nnzs_per_segment * segment){
+                printf("DEBUG: csr_Rows %u > nnzs_per_segments %u * segments %d\n",  csr_Rows[i], nnzs_per_segment, segment);
                 break;
+            }
+        }
         segments[segment] = i;
     }
     for(unsigned int segment = 0; segment < device_numbers; segment++){
         segment_rows[segment] = segments[segment+1] - segments[segment];
         segment_nnzs[segment] = (unsigned int)(csr_Rows[segments[segment+1]] - csr_Rows[segments[segment]]);
         offsets[segment] = csr_Rows[segments[segment]];
+        printf("Segment %u with rows: %u nnzs %u offset %u\n", segment, segment_rows[segment], segment_nnzs[segment], offsets[segment]);
     }
 }
 
@@ -158,6 +163,14 @@ void mlem_nccl_none_trans(  unsigned long *csr_Rows, unsigned int *csr_Cols, flo
         // cudaMemcpy(cuda_Rows[i], csr_Rows+segments[i], sizeof(unsigned int)*(segment_rows[i] + 1), cudaMemcpyHostToDevice);
         cudaMemcpy(cuda_Rows[i], csr_Rows_help, sizeof(unsigned int)*(segment_rows[i] + 1), cudaMemcpyHostToDevice);
         csr_Rows[segments[i+1]] += offsets[i];
+
+        // test
+        printf("Number of rows on GPU %d is: %u\n", i, segment_rows[i]);
+        printf("Number of nnzs on GPU %d is: %u\n", i, segment_nnzs[i]);
+        printf("First element in csr_Rows on GPU %d is: %d\n", i, csr_Rows_help[0]);
+        printf("Last element in csr_Rows on GPU %d is: %d\n\n", i, csr_Rows_help[segment_rows[i] + 1]);
+
+
         free(csr_Rows_help);
         cudaMemcpy(cuda_Cols[i], csr_Cols+offsets[i], sizeof(unsigned int)*segment_nnzs[i], cudaMemcpyHostToDevice);
         cudaMemcpy(cuda_Vals[i], csr_Vals+offsets[i], sizeof(float)*segment_nnzs[i], cudaMemcpyHostToDevice);

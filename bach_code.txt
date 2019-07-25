@@ -4,18 +4,22 @@ for gpu in {2..8}
 do
         for i in {1..50}
         do
-                nvprof --log-file ./result/16g.$gpu.trans.coalesced.$i.txt ./test /home/ga39pid2/mlem-data/madpet2.p016.csr4 /home/ga39pid2/mlem-data/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 $gpu 5 5 1 1
-                nvprof --log-file ./result/16g.$gpu.trans.csrmv.$i.txt ./test /home/ga39pid2/mlem-data/madpet2.p016.csr4 /home/ga39pid2/mlem-data/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 $gpu 5 5 1 0
-                nvprof --log-file ./result/16g.$gpu.non-trans.coalesced.$i.txt ./test /home/ga39pid2/mlem-data/madpet2.p016.csr4 /home/ga39pid2/mlem-data/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 $gpu 5 5 1 1 1
-                nvprof --log-file ./result/16g.$gpu.non-trans.csrmv.$i.txt ./test /home/ga39pid2/mlem-data/madpet2.p016.csr4 /home/ga39pid2/mlem-data/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 $gpu 5 5 1 1 0
+                nvprof --log-file ./result/16g.$gpu.trans.coalesced.$i.txt ./test /home/ga39pid2/mlem-data/madpet2.p016.csr4 /home/ga39pid2/mlem-data/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 $gpu 5 5 0 1
+        done
+
+        for i in {1..10}
+        do
+                nvprof --log-file ./result/16g.$gpu.trans.merge.$i.txt ./test /home/ga39pid2/mlem-data/madpet2.p016.csr4 /home/ga39pid2/mlem-data/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 $gpu 5 5 0 0
+                nvprof --log-file ./result/16g.$gpu.non-trans.coalesced.$i.txt ./test /home/ga39pid2/mlem-data/madpet2.p016.csr4 /home/ga39pid2/mlem-data/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 $gpu 5 5 1 1
+                nvprof --log-file ./result/16g.$gpu.non-trans.merge.$i.txt ./test /home/ga39pid2/mlem-data/madpet2.p016.csr4 /home/ga39pid2/mlem-data/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 $gpu 5 5 1 0
         done
 done
 
 
 
-for secsize in {2,4,6,8,10,12,14,16,18,20}
+for secsize in {2..10}
 do
-        nvprof --log-file ./result/16g.bw5.fw$secsize.txt ./test (matrix) (image) 500 2 $secsize 5 0 0
-        nvprof --log-file ./result/16g.fw5.bw$secsize.txt ./test (matrix) (image) 500 2 5 $secsize 0 0    
+        nvprof --log-file ./result_secsize/16g.bw5.fw$secsize.txt ./test /home/ga39pid2/mlem-data/madpet2.p016.csr4 /home/ga39pid2/mlem-data/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 2 $secsize 5 0 0
+        nvprof --log-file ./result_secsize/16g.fw5.bw$secsize.txt ./test /home/ga39pid2/mlem-data/madpet2.p016.csr4 /home/ga39pid2/mlem-data/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 2 5 $secsize 0 0    
 done
 

@@ -176,7 +176,7 @@ void mlem_nccl_none_trans(  int *csr_Rows, int *csr_Cols, float *csr_Vals, int *
 
 
     switch(matrix_vector_mul){
-        case 0: { // CSRMV
+        case 0: { // NVIDIA merge-based
             // determine grid size and section size
             for(int i = 0; i < device_numbers; i++){
                 int items_fwproj = segment_rows[i] + segment_nnzs[i];
@@ -189,8 +189,8 @@ void mlem_nccl_none_trans(  int *csr_Rows, int *csr_Cols, float *csr_Vals, int *
                 // forward projection
                 for(int i = 0; i < device_numbers; i++){
                     cudaSetDevice(i);
-                    calcFwProj <<< gridsize_fwproj[i], blocksize >>> (  cuda_Rows[i], cuda_Cols[i], cuda_Vals[i], cuda_f[i], 
-                                                                        cuda_temp[i], secsize_fwproj[i], segment_rows[i], segment_nnzs[i]);
+                    calcFwProj_merge_based <<< gridsize_fwproj[i], blocksize >>> (  cuda_Rows[i], cuda_Cols[i], cuda_Vals[i], cuda_f[i], 
+                                                                                    cuda_temp[i], secsize_fwproj[i], segment_rows[i], segment_nnzs[i]);
                 }
 
                 // correlation
@@ -233,8 +233,8 @@ void mlem_nccl_none_trans(  int *csr_Rows, int *csr_Cols, float *csr_Vals, int *
                     cudaSetDevice(i);
                     cudaMemset(cuda_temp[i], 0, sizeof(float)*segment_rows[i]);
                 }
-            } break;
-        }
+            }
+        } break;
 
         case 1: { // coalesced brutal warp
             for(int i = 0; i < device_numbers; i++)
@@ -309,7 +309,7 @@ void mlem_nccl_none_trans(  int *csr_Rows, int *csr_Cols, float *csr_Vals, int *
         float sum = 0;
         for(unsigned long i = 0; i < cols; i += 1)
             sum += result_f[i];
-        printf("\nSum f: %f\n\n", sum);
+        printf("\nSum f: %f\n", sum);
     
 
     // free all memory
@@ -450,14 +450,14 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
 
 
     switch(matrix_vector_mul){
-        case 0: { // CSRMV
+        case 0: { // NVIDIA merge-based
             // determine grid size and section size
             for(int i = 0; i < device_numbers; i++){
                 int items_fwproj = segment_rows[i] + segment_nnzs[i];
                 int items_bwproj = segment_rows_trans[i] + segment_nnzs_trans[i];
                 // determine section size for foward projection and backward projection
                 secsize_fwproj[i] = secsize_fw; // ceil((double)items_fwproj / (blocksize * gridsize_fwproj[i]));
-                secsize_bwproj[i] = secsize_fw; // ceil((double)items_bwproj / (blocksize * gridsize_bwproj[i]));
+                secsize_bwproj[i] = secsize_bw; // ceil((double)items_bwproj / (blocksize * gridsize_bwproj[i]));
                 // determine grid size for forward projection and backward projection
                 gridsize_fwproj[i] = ceil((double)items_fwproj / (blocksize * secsize_fwproj[i])); // ceil(sqrt((double)items_fwproj / blocksize));
                 gridsize_bwproj[i] = ceil((double)items_bwproj / (blocksize * secsize_bwproj[i])); // ceil(sqrt((double)items_bwproj / blocksize));      
@@ -469,8 +469,8 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
                 // forward projection
                 for(int i = 0; i < device_numbers; i++){
                     cudaSetDevice(i);
-                    calcFwProj <<< gridsize_fwproj[i], blocksize >>> (  cuda_Rows[i], cuda_Cols[i], cuda_Vals[i], cuda_f[i], 
-                                                                        cuda_temp[i] + segments[i], secsize_fwproj[i], segment_rows[i], segment_nnzs[i]);
+                    calcFwProj_merge_based <<< gridsize_fwproj[i], blocksize >>> (  cuda_Rows[i], cuda_Cols[i], cuda_Vals[i], cuda_f[i], 
+                                                                                    cuda_temp[i] + segments[i], secsize_fwproj[i], segment_rows[i], segment_nnzs[i]);
                 }
 
                 // correlation
@@ -492,7 +492,7 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
                 // backward projection
                 for(int i = 0; i < device_numbers; i++){
                     cudaSetDevice(i);
-                    calcBwProj <<< gridsize_bwproj[i], blocksize >>> (  cuda_Rows_Trans[i], cuda_Cols_Trans[i], cuda_Vals_Trans[i], cuda_temp[i], 
+                    calcBwProj_merge_based <<< gridsize_bwproj[i], blocksize >>> (  cuda_Rows_Trans[i], cuda_Cols_Trans[i], cuda_Vals_Trans[i], cuda_temp[i], 
                                                                         cuda_bwproj[i] + segments_trans[i], secsize_bwproj[i], segment_rows_trans[i], segment_nnzs_trans[i]);
                 }
             
@@ -523,8 +523,8 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
                     cudaSetDevice(i);
                     cudaMemset(cuda_temp[i], 0, sizeof(float)*rows);
                 }
-            } break;
-        }
+            }
+        } break;
 
         case 1: { // coalesced brutal warp
             for(int i = 0; i < device_numbers; i++){
@@ -610,7 +610,7 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
         float sum = 0;
         for(unsigned long i = 0; i < cols; i += 1)
             sum += result_f[i];
-        printf("\nSum f: %f\n\n", sum);
+        printf("\nSum f: %f\n", sum);
     
 
     // free all memory
@@ -666,10 +666,10 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
     argv[2]: path for image
     argv[3]: iteration times
     argv[4]: number of GPUs to be used
-    argv[5]: section size for forward projection in CSRMV
-    argv[6]: section size for backward projection in CSRMV
+    argv[5]: section size for forward projection in NVIDIA merge-based
+    argv[6]: section size for backward projection in NVIDIA merge-based
     argv[7]: whether to use transposed matrix              0: use transposed matrix    1: not use transposed matrix
-    argv[8]: which matrix-vector multiplication to use     0: NVIDIA CSRMV             1: coalesced brutal warp
+    argv[8]: which matrix-vector multiplication to use     0: NVIDIA merge-based       1: coalesced brutal warp
 
     run examples:
     ./test /scratch/pet/madpet2.p016.csr4.small /scratch/pet/Trues_Derenzo_GATE_rot_sm_200k.LMsino.small 500 2 4 4 0 0
@@ -679,8 +679,8 @@ void mlem_nccl( int *csr_Rows, int *csr_Cols, float *csr_Vals,
     ./test /scratch/pet/madpet2.p016.csr4 /scratch/pet/Trues_Derenzo_GATE_rot_sm_200k.LMsino 500 1 5 5 1 1
 */
 int main(int argc, char **argv){
-    if(argc < 9){
-        printf("Too less parameter for main function! Program exits!\n");
+    if(argc != 9){
+        printf("Too less or too many parameters for main function! Program exits!\n");
         return 0;
     }
 

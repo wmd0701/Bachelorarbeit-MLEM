@@ -191,6 +191,57 @@ void scan_omp(int *in, int *out, int N, bool inclusive, int base) {
     delete []sums;
 }
 
+// specialized version of scan_kernel
+void scan_kernel_specialized(unsigned long *in, unsigned long *out, unsigned long N, bool inclusive, unsigned long base) {
+#if defined(__AVX2__) || defined(__MIC__)
+    scan_kernel_vec_horn(in, out, N, inclusive, base);
+#else
+    if (inclusive) {
+        out[0] = in[0] + base;
+        for(unsigned long i = 1; i < N; i++) {
+            out[i] = out[i-1] + in[i];
+        }
+    } else {
+        unsigned long sum = base;
+        for(unsigned long i = 0; i < N; i++) {
+            unsigned long tmp = in[i];
+            out[i] = sum;
+            sum += tmp;
+        }
+    }
+    return;
+#endif
+}
+
+// specialized version of scan_omp
+void scan_omp_specialzed(unsigned long *in, unsigned long *out, unsigned long N, bool inclusive, unsigned long base) {
+    // int p = 1;
+#pragma omp parallel
+    // p = omp_get_num_threads();
+    omp_get_num_threads();
+    unsigned long nblocks = NBLOCKS(N, _SCAN_BSIZE);
+    if (nblocks <= 2) {
+        scan_kernel_specialized(in, out, N, inclusive, base);
+        return;
+    }
+    unsigned long *sums = new unsigned long[nblocks];
+#pragma omp parallel for 
+    for (unsigned long i = 0; i < nblocks; i++) {
+        unsigned long st = i * _SCAN_BSIZE;
+        unsigned long ed = std::min(st + _SCAN_BSIZE, N);
+        unsigned long sum = std::accumulate(in+st, in+ed, 0);
+        sums[i] = sum;
+    }
+    scan_omp_specialzed(sums, sums, nblocks, false, base);
+#pragma omp parallel for 
+    for(unsigned long i = 0; i < nblocks; i++) {
+        unsigned long st = i * _SCAN_BSIZE;
+        unsigned long ed = std::min(st + _SCAN_BSIZE, N);
+        scan_kernel_specialized(in+st, out+st, ed-st, inclusive, sums[i]);
+    }
+    delete []sums;
+}
+
 template<typename iT, typename vT>
 void sptrans_scanTrans(int  m,
                        int  n,
@@ -332,6 +383,157 @@ void sptrans_scanTrans(int  m,
             for(i = 0; i < len; i++) {
                 offset            = wb_index[intra_start + i];
                 cscRowIdx[offset] = csrRowUnroll[intra_start + i];
+            }
+        }
+    }
+
+    free(csrRowUnroll);
+    free(inter);
+    free(intra);
+    free(wb_index);
+}
+
+// specialized version of sptrans_scanTrans
+void sptrans_scanTrans_specialized (    unsigned int  m,
+                                        unsigned int  n,
+                                        unsigned long nnz,
+                                        unsigned long *csrRowPtr,
+                                        unsigned int *csrColIdx,
+                                        float *csrVal,
+                                        unsigned int *cscRowIdx,
+                                        unsigned long *cscColPtr,
+                                        float *cscVal)
+{
+    unsigned long i, j, ii, jj, procs; //, k; 
+
+#pragma omp parallel
+    procs = omp_get_num_threads();
+
+    unsigned long size = nnz / procs;
+    unsigned long left = nnz % procs;
+    unsigned long *csrRowUnroll = (unsigned long *)malloc(nnz * sizeof(unsigned long));
+    unsigned long *intra        = (unsigned long *)malloc(nnz * sizeof(unsigned long));
+    unsigned long *wb_index     = (unsigned long *)malloc(nnz * sizeof(unsigned long));
+    unsigned long *inter        = (unsigned long *)malloc((procs + 1) * n * sizeof(unsigned long));
+    memset(inter, 0, (procs + 1) * n * sizeof(unsigned long));
+
+#pragma omp parallel default(shared) private(i)
+    {
+        unsigned long index = 0;
+        unsigned long tid = omp_get_thread_num();
+        unsigned long inter_start = n + tid * n; 
+        unsigned long intra_start = size * tid;
+        unsigned long len = size;
+
+        if (left != 0) {
+            if (tid < left) {
+                len += 1;
+                intra_start = tid * size + tid;
+            } else {
+                intra_start = tid * size + left;
+            }
+        }
+
+        for (i = 0; i < len; i++) {
+            index = inter_start + csrColIdx[intra_start + i];
+            intra[intra_start + i] = inter[index];
+            inter[index]++;
+        }
+    }
+
+#pragma omp parallel for default(shared) private(i, j) //schedule(dynamic)
+    for (i = 0; i < n; i++) {
+        for (j = 2; j < procs + 1; j++) {
+            inter[i + n * j] += inter[i + n * (j - 1)];
+        }
+    }
+
+#pragma omp parallel for default(shared) private(i) //schedule(dynamic)
+#pragma ivdep
+    for (i = 0; i < n; i++) {
+        cscColPtr[i + 1] = inter[n * procs + i];
+    }
+
+    scan_omp_specialzed(cscColPtr,cscColPtr,n+1,true,0);
+
+#pragma omp parallel for default(shared) private(i, j, ii, jj) //schedule(dynamic)
+    for (i = 0 ; i < m; i++) {
+        ii = csrRowPtr[i + 1] - csrRowPtr[i];
+        jj = csrRowPtr[i];
+        for (j = 0; j < ii; j++) {
+            csrRowUnroll[jj + j] = i;
+        }
+    }
+
+#pragma omp parallel default(shared) private(i, j)
+    {
+        unsigned long tid = omp_get_thread_num();
+        unsigned long inter_start = tid * n; 
+        unsigned long intra_start = size * tid;
+        unsigned long len = size;
+        unsigned long colIdx, offset;
+
+        if (left != 0) {
+            if (tid < left) {
+                len += 1;
+                intra_start = tid * size + tid;
+            } else {
+                intra_start = tid * size + left;
+            }
+        }
+
+        for (i = 0; i < len; i++) {
+            colIdx = csrColIdx[intra_start + i];
+            offset = cscColPtr[colIdx] + inter[inter_start + colIdx] + intra[intra_start + i];
+            wb_index[intra_start + i] = offset;
+        }
+    }
+
+    if (csrVal != NULL) {
+#pragma omp parallel default(shared) private(i, j)
+        {
+            unsigned long offset = 0;
+            unsigned long tid = omp_get_thread_num();
+            // unsigned long inter_start = tid * n; 
+            unsigned long intra_start = size * tid;
+            unsigned long len = size;
+
+            if (left != 0) {
+                if (tid < left) {
+                    len += 1;
+                    intra_start = tid * size + tid;
+                } else {
+                    intra_start = tid * size + left;
+                }
+            }
+
+            for (i = 0; i < len; i++) {
+                offset            = wb_index[intra_start + i];
+                cscVal[offset]    = csrVal[intra_start + i];
+                cscRowIdx[offset] = (unsigned int)csrRowUnroll[intra_start + i];
+            }
+        }
+    } else {
+#pragma omp parallel default(shared) private(i, j)
+        {
+            unsigned long offset = 0;
+            unsigned long tid = omp_get_thread_num();
+            // unsigned long inter_start = tid * n; 
+            unsigned long intra_start = size * tid;
+            unsigned long len = size;
+
+            if (left != 0) {
+                if (tid < left) {
+                    len += 1;
+                    intra_start = tid * size + tid;
+                } else {
+                    intra_start = tid * size + left;
+                }
+            }
+
+            for(i = 0; i < len; i++) {
+                offset            = wb_index[intra_start + i];
+                cscRowIdx[offset] = (unsigned int)csrRowUnroll[intra_start + i];
             }
         }
     }

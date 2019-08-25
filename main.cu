@@ -71,7 +71,7 @@ int main(int argc, char **argv){
     nnzs = matrix.elements();
     matrix.mapRows(0, rows);    
     csr_Rows = (unsigned long*)malloc(sizeof(unsigned long) * (rows + 1));
-    csr_Cols = (unsigned int*)malloc(sizeof(int) * nnzs);
+    csr_Cols = (unsigned int*)malloc(sizeof(unsigned int) * nnzs);
     csr_Vals = (float*)malloc(sizeof(float) * nnzs);
     csr_format_for_cuda(matrix, csr_Vals, csr_Rows, csr_Cols);
     Vector<float> norm_helper(cols, 0.0);

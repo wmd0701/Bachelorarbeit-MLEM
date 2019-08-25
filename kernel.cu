@@ -178,12 +178,12 @@ __device__ void merge_based_start(	unsigned int *csr_Rows,
 	// !!!  gridsize x blocksize x sectionsize		 >= rows + nnzs
 	// !!! (gridsize x blocksize - 1) x sectionsize  <  rows + nnzs
 
-	unsigned int lefti = 0;
-	unsigned int righti = rows;
-	unsigned int nexti = righti / 2;
-	unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
-	unsigned int start = index * secSize;
-	unsigned int nextj = start - nexti;
+	int lefti = 0;
+	int righti = rows;
+	int nexti = righti / 2;
+	int index = blockIdx.x * blockDim.x + threadIdx.x;
+	int start = index * secSize;
+	int nextj = start - nexti;
 	int i = 0, j = start;
 
 	while (i != nexti) {

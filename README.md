@@ -3,6 +3,7 @@
 This is the project for Mengdi' bachelor thesis for the topic: porting MLEM algorithm to heterogeneous systems. The main purpose is to develop a special version of MLEM algorithm working on multiple GPUs, while other parts of the work are done on CPU.
 
 Most of the pre-process work such as loading matrix, transporing matrix, partitioning matrix etc. are done on CPUs.
+
 Others are done on GPUs.
 
 ## Files

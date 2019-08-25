@@ -17,19 +17,22 @@ void csr_format_for_cuda(const Csr4Matrix& matrix, float* csrVal, unsigned long*
 void calcColumnSums(const Csr4Matrix& matrix, Vector<float>& norm);
 void partitionMatrix(unsigned long *csr_Rows, unsigned long nnzs, unsigned int rows, unsigned int device_numbers, unsigned int *segments, unsigned int *segment_rows, unsigned int *segment_nnzs, unsigned long *offsets);
 void mlem(unsigned long *csr_Rows, unsigned int *csr_Cols, float *csr_Vals, unsigned long *csr_Rows_Trans, unsigned int *csr_Cols_Trans, float *csr_Vals_Trans, int *g, float *norm, float *f, float *result_f, unsigned int rows, unsigned int cols, unsigned long nnzs, unsigned int iterations, unsigned int device_numbers, unsigned int matrix_vector_mul, unsigned int secsize_fp, unsigned int secsize_bp, unsigned int using_trans);
-
+void help();
 
 /*
-    argv[1]: path for matrix
-    argv[2]: path for image
-    argv[3]: iteration times
-    argv[4]: number of GPUs to be used
-    argv[5]: section size for forward projection in NVIDIA merge-based
-    argv[6]: section size for backward projection in NVIDIA merge-based
-    argv[7]: whether to use transposed matrix              0: use transposed matrix    1: not use transposed matrix
-    argv[8]: which matrix-vector multiplication to use     0: NVIDIA merge-based       1: coalesced brutal warp
+    brief: program main body
+    @param argc:    number of parameters, should be 9
+    @param argv[0]: function name, determined automatically
+    @param argv[1]: path of matrix file
+    @param argv[2]: path of image  file
+    @param argv[3]: iteration times
+    @param argv[4]: number of GPUs to be used
+    @param argv[5]: section size for forward  projection in NVIDIA merge-based SpMV
+    @param argv[6]: section size for backward projection in NVIDIA merge-based SpMV
+    @param argv[7]: whether to use transposed matrix    0: yes   1: no
+    @param argv[8]: which SpMV to used     0: NVIDIA merge-based SpMV    1: Coalesced Brutal Warp SpMV
 
-    run examples:
+    use examples:
     ./test /scratch/pet/madpet2.p016.csr4.small /scratch/pet/Trues_Derenzo_GATE_rot_sm_200k.LMsino.small 500 2 4 4 0 0
     ./test /scratch/pet/madpet2.p016.csr4.small /scratch/pet/Trues_Derenzo_GATE_rot_sm_200k.LMsino.small 500 2 3 9 1 0
     ./test /scratch/pet/madpet2.p016.csr4.small /scratch/pet/Trues_Derenzo_GATE_rot_sm_200k.LMsino.small 500 2 3 9 0 1
@@ -38,24 +41,24 @@ void mlem(unsigned long *csr_Rows, unsigned int *csr_Cols, float *csr_Vals, unsi
 */
 int main(int argc, char **argv){
     if(argc != 9){
-        printf("Too less or too many parameters for main function! Program exits!\n");
-        return 0;
+        help();
+        return EXIT_FAILURE;
     }
 
     std::string matrixPath(argv[1]);
     std::string imagePath(argv[2]);
-    unsigned int iterations          = strtol(argv[3], NULL, 10);
-    unsigned int device_numbers      = strtol(argv[4], NULL, 10);
-    unsigned int secsize_fp          = strtol(argv[5], NULL, 10);
-    unsigned int secsize_bp          = strtol(argv[6], NULL, 10);
-    unsigned int using_trans         = strtol(argv[7], NULL, 10);
-    unsigned int matrix_vector_mul   = strtol(argv[8], NULL, 10);
+    unsigned int iterations          = strtol(argv[3], NULL, 10); if(iterations == 0) { help(); return EXIT_FAILURE; }  
+    unsigned int device_numbers      = strtol(argv[4], NULL, 10); if(device_numbers == 0) { help(); return EXIT_FAILURE; }
+    unsigned int secsize_fp          = strtol(argv[5], NULL, 10); if(secsize_fp == 0) { help(); return EXIT_FAILURE; }
+    unsigned int secsize_bp          = strtol(argv[6], NULL, 10); if(secsize_bp == 0) { help(); return EXIT_FAILURE; }
+    unsigned int using_trans         = strtol(argv[7], NULL, 10); if(using_trans != 0 && using_trans != 1) { help(); return EXIT_FAILURE; }
+    unsigned int matrix_vector_mul   = strtol(argv[8], NULL, 10); if(matrix_vector_mul != 0 && matrix_vector_mul != 1) { help(); return EXIT_FAILURE; }
     
     int device_numbers_available = 0;
     cudaGetDeviceCount(&device_numbers_available);
     if(device_numbers_available < device_numbers){
-        printf("Number of available GPUs less than ordered! Program exits!\n");
-        return 0;
+        help();
+        return EXIT_FAILURE;
     }
 
     // host variables
@@ -101,7 +104,6 @@ int main(int argc, char **argv){
         sptrans_scanTrans_specialized(rows, cols, nnzs, csr_Rows, csr_Cols, csr_Vals, csr_Cols_Trans, csr_Rows_Trans, csr_Vals_Trans);
     }
 
-        
     // run MLEM
     mlem(   csr_Rows, 
             csr_Cols,
@@ -137,9 +139,31 @@ int main(int argc, char **argv){
         if (csr_Vals_Trans) free(csr_Vals_Trans);
     }
 
-    return 0;
+    return EXIT_SUCCESS;
 }
 
+/*
+    brief: main body of MLEM algorithm
+    @param csr_Rows:            row    vector in CSR format
+    @param csr_Cols:            column vector in CSR format
+    @param csr_Vals:            value  vector in CSR format
+    @param csr_Rows_Trans:      row    vector in CSR format, for transposed matrix
+    @param csr_Cols_Trans:      column vector in CSR format, for transposed matrix
+    @param csr_Vals_Trans:      value  vector in CRS format, for transposed matrix 
+    @param g:                   image  vector
+    @param norm:                norm   vector
+    @param f:                   initial values for the first MLEM iteration
+    @param result_f:            output vector
+    @param rows:                number of rows
+    @param cols:                number of columns
+    @param nnzs:                number of nnzs
+    @param iterations:          iteration times
+    @param device_numbers:      number of GPUs applied
+    @param matrix_vector_mul:   which SpMV to be used    0: NVIDIA merge-based SpMV   1: Coalesced Brutal Warp SpMV
+    @param secsize_fp:          section size for forward  projection (in merge-based SpMV)
+    @param secsize_bp:          section size for backward projection (in merge-based SpMV)
+    @param using_trans:         whether to use transposed matrix for backward projection     0: yes   1: no
+*/
 void mlem(  unsigned long *csr_Rows, 
             unsigned int *csr_Cols, 
             float *csr_Vals, 
@@ -489,7 +513,8 @@ void mlem(  unsigned long *csr_Rows,
     if(gridsize_update) free(gridsize_update);
 }
 
-
+// load matrix into CSR format
+// PS: this function is provided by the Department of Informatics
 void csr_format_for_cuda(const Csr4Matrix& matrix, float* csrVal, unsigned long* csrRowInd, unsigned int* csrColInd){   
     unsigned int index = 0;
     csrRowInd[index] = 0;
@@ -528,8 +553,9 @@ void csr_format_for_cuda(const Csr4Matrix& matrix, float* csrVal, unsigned long*
     }
 }
 
-void calcColumnSums(const Csr4Matrix& matrix, Vector<float>& norm)
-{
+// summation over each matrix column, useful for calculating norms
+// PS: this function is provided by the Department of Informatics
+void calcColumnSums(const Csr4Matrix& matrix, Vector<float>& norm){
     assert(matrix.columns() == norm.size());
 
     std::fill(norm.ptr(), norm.ptr() + norm.size(), 0.0);
@@ -553,12 +579,16 @@ void calcColumnSums(const Csr4Matrix& matrix, Vector<float>& norm)
     // norm.writeToFile("norm-0.out");
 }
 
-/* a general version of halfMatrix: partition matrix unsigned into device_numbers parts, corresponding rows are saved in the array segments
-   start row of segment i: segments[i]
-    end  row of segment i: segments[i+1]
-    number of rows in segment i: segments[i+1] - segments[i] (saved in segment_rows)
-    number of nnzs in segment i: csr_Rows[segments[i+1]] - csr_Rows[segments[i]] (saved in segment_nnzs)
-    offset when copying from host to device: csr_Rows[segments[i]] (saved in offsets)
+/* 
+    brief: partition matrix evenly into equally sized segments (smaller matrices), according to the number of GPUs applied
+    @param csr_Rows:        row array in CSR format
+    @param nnzs:            number of nnzs
+    @param rows:            number of rows
+    @param device_numbers:  number of GPUs applied
+    @param segments:        for each segment i: segments[i] is first row, segments[i+1] is last row
+    @param segment_rows:    numbers of rows in smaller matrices
+    @param segment_nnzs:    numbers of nnzs in smaller matrices
+    @offsets:               row offset of each smaller matrix in the original matrix
 */
 void partitionMatrix(unsigned long *csr_Rows, unsigned long nnzs, unsigned int rows, unsigned int device_numbers, unsigned int *segments, unsigned int *segment_rows, unsigned int *segment_nnzs, unsigned long *offsets){
     segments[0] = 0;
@@ -578,4 +608,18 @@ void partitionMatrix(unsigned long *csr_Rows, unsigned long nnzs, unsigned int r
         segment_nnzs[segment] = (unsigned int)(csr_Rows[segments[segment+1]] - csr_Rows[segments[segment]]);
         offsets[segment] = csr_Rows[segments[segment]];
     }
+}
+
+// output help information on prompt so that the user of this program can better understand
+void help(){
+    printf("\nWrong parameters! Please read the following instructions:\n\n");
+    printf("total amount of parameters: 9\n");
+    printf("argv[1]: path of matrix file\n");
+    printf("argv[2]: path of image  file\n");
+    printf("argv[3]: iteration times\n");
+    printf("argv[4]: number of GPUs to be used\n");
+    printf("argv[5]: section size for forward  projection (merge-based SpMV)\n");
+    printf("argv[6]: section size for backward projection (merge-based SpMV)\n");
+    printf("argv[7]: backward projection uses transposed matrix?     0: yes  1: no\n");
+    printf("argv[8]: which SpMV to be used?     0: NVIDIA merge-based SpMV     1: Coalesced Brutal Warp SpMV\n\n");
 }

@@ -3,15 +3,51 @@
 #include "kernel.cuh"
 
 /*
-	brief: calculate forward projection, output saved in fwproj
-	@param csr_Row:		row array
-	@param csr_Val:		value array
-	@param csr_Col:		column array
-	@param f:			f array from last iteration
-	@param fwproj:		output array
-	@param secSize:		section size
-	@param rows:			number of rows (equals to length of row array - 1)
-	@param nnzs:			number of nnzs (equals to length of val/col array)
+	brief: calculate correlation, output saved in fwproj in-place
+	@param g:		image vector
+	@param fwproj:	result of forward projection / output array
+	@param rows:	number of rows (equals to length of row array - 1)
+*/
+__global__ void calcCorrel(int *g, float *fwproj, unsigned int rows) {
+	
+	// !!! gridsize x blocksize >= rows
+	
+	unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+	if (index < rows) 
+		if(fwproj[index] != 0.0f)
+			fwproj[index] =  g[index] / fwproj[index];
+}
+
+/*
+	brief: calculate update, output saved in bwproj, for mlem nccl
+	@param f:		input array
+	@param norm:	norm array
+	@param bwproj:	result of backward projection / output array
+	@param cols:	number of columns
+*/
+__global__ void calcUpdate(float *f, float *norm, float *bwproj, unsigned int cols) {
+	
+	// !!!gridsize x blocksize >= cols
+
+	unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+	if (index < cols) {
+		if(norm[index] == 0.0f)
+			bwproj[index] = f[index] * bwproj[index];
+		else
+			bwproj[index] = f[index] * bwproj[index] / norm[index];
+	}
+}
+
+/*
+	brief: calculate forward projection using NVIDIA merge-based SpMV, output saved in fwproj
+	@param csr_Row:	row    array
+	@param csr_Col:	column array
+	@param csr_Val:	value  array	
+	@param f:		f array from last iteration
+	@param fwproj:	output array
+	@param secSize:	section size
+	@param rows:	number of rows (equals to length of row array - 1)
+	@param nnzs:	number of nnzs (equals to length of val/col array)
 */
 __global__ void calcFwProj_merge_based(	unsigned int *csr_Rows, 
 										unsigned int *csr_Cols, 
@@ -35,32 +71,14 @@ __global__ void calcFwProj_merge_based(	unsigned int *csr_Rows,
 						nnzs);
 }
 
-
 /*
-	brief: calculate correlation, output saved in fwproj in-place
-	@param g:			measurement array
-	@param fwproj:		result of forward projection / output array
-	@param rows:			number of rows (equals to length of row array - 1)
-*/
-__global__ void calcCorrel(int *g, float *fwproj, unsigned int rows) {
-	
-	// !!! gridsize x blocksize >= rows
-	
-	unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
-	if (index < rows) 
-		if(fwproj[index] != 0.0f)
-			fwproj[index] =  g[index] / fwproj[index];
-}
-
-
-/*
-	brief: calculate backward projection using transposed matrix, output saved in bwproj
-	@param csr_Row:		row array of transposed matrix
-	@param csr_Val:		value array of transposed matrix
-	@param csr_Col:		column array of transposed matrix
-	@param correl:		result of correlation calculation
-	@param bwproj:		output array
-	@param secSize:		section size
+	brief: calculate backward projection using NVIDIA merge-based SpMV, output saved in bwproj
+	@param csr_Row_Trans:	row    array of transposed matrix	
+	@param csr_Col_Trans:	column array of transposed matrix
+	@param csr_Val_Trans:	value  array of transposed matrix
+	@param correl:			result of correlation calculation
+	@param bwproj:			output array
+	@param secSize:			section size
 	@param cols:			number of rows of transposed matrix (columns of original matrix)
 	@param nnzs:			number of nnzs (equals to length of val/col array)
 */
@@ -87,27 +105,16 @@ __global__ void calcBwProj_merge_based(	unsigned int *csr_Rows_Trans,
 }
 
 
+
 /*
-	brief: calculate update, output saved in bwproj, for mlem nccl
-	@param f:			input array
-	@param norm:		norm array
-	@param bwproj:		result of backward projection / output array
-	@param cols:		number of columns of original matrix
+	brief: calculate forward projection using Coalesced Brutal Warp SpMV, output saved in fwproj
+	@param csr_Rows:	row    array
+	@param csr_Cols:	column array
+	@param csr_Vals:	value  array
+	@param f:			f array from last iteration
+	@param fwproj:		output array
+	@param rows:		number of rows
 */
-__global__ void calcUpdate(float *f, float *norm, float *bwproj, unsigned int cols) {
-	
-	// !!!gridsize x blocksize >= cols
-
-	unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
-	if (index < cols) {
-		if(norm[index] == 0.0f)
-			bwproj[index] = f[index] * bwproj[index];
-		else
-			bwproj[index] = f[index] * bwproj[index] / norm[index];
-	}
-}
-
-
 __global__ void calcFwProj_coalesced_brutal_warp (	unsigned int *csr_Rows, 
 													unsigned int *csr_Cols, 
 													float *csr_Vals, 
@@ -122,6 +129,15 @@ __global__ void calcFwProj_coalesced_brutal_warp (	unsigned int *csr_Rows,
 										rows);
 }
 
+/*
+	brief: calculate backward projection using Coalesced Brutal Warp SpMV, output saved in bwproj
+	@param csr_Rows_Trans:	row    array of transposed matrix
+	@param csr_Cols_Trans:	column array of transposed matrix
+	@param csr_Vals_Trans:	value  array of transposed matrix
+	@param correl:			result of correlation calculation
+	@param bwproj:			output array
+	@param cols:			number of rows in transposed matrix (number of columns in original matrix)
+*/
 __global__ void calcBwProj_coalesced_brutal_warp(	unsigned int *csr_Rows_Trans, 
 													unsigned int *csr_Cols_Trans, 
 													float *csr_Vals_Trans, 
@@ -136,6 +152,16 @@ __global__ void calcBwProj_coalesced_brutal_warp(	unsigned int *csr_Rows_Trans,
 										cols);
 }
 
+/*
+	brief: calculate backward projection using no transposed matrix, output saved in bwproj
+	@param csr_Rows:	row    array
+	@param csr_Cols:	column array
+	@param csr_Vals:	value  array
+	@param correl:		result of correlation calculation
+	@param bwproj:		output array
+	@param rows:		number of rows
+	
+*/
 __global__ void calcBwProj_none_trans(	unsigned int *csr_Rows, 
 										unsigned int *csr_Cols, 
 										float *csr_Vals, 
@@ -150,21 +176,16 @@ __global__ void calcBwProj_none_trans(	unsigned int *csr_Rows,
 							rows);
 }
 
-
-
-
-
-
 /*
-	brief: find start coordinate for each section and call SpMV_work
-	@param csr_Row:		row array
-	@param csr_Val:		value array
-	@param csr_Col:		column array
-	@param *x:			vector being multiplied
-	@param *result:		result vector
-	@param secSize:		section size
-	@param rows:			number of rows (equals to length of row array - 1)
-	@param nnzs:			number of nnzs (equals to length of val/col array)
+	brief: helper function for merge-based SpMV: find start coordinate for each section and call merge_based_work
+	@param csr_Row:	row    array
+	@param csr_Val:	value  array
+	@param csr_Col:	column array
+	@param x:		vector to be multiplied with the matrix
+	@param result:	output
+	@param secSize:	section size
+	@param rows:	number of rows (equals to length of row array - 1)
+	@param nnzs:	number of nnzs (equals to length of val/col array)
 */
 __device__ void merge_based_start(	unsigned int *csr_Rows, 
 									unsigned int *csr_Cols, 
@@ -221,10 +242,17 @@ __device__ void merge_based_start(	unsigned int *csr_Rows,
 
 
 /*
-	brief: matrix-vector multiplication for each section
-	@param i:			x-coordinate of start pounsigned int
-	@param j:			y-coordinate of start pounsigned int
-	other params:		same as SpMV_start
+	brief: helper function for megr-based SpMV: perform matrix-vector multiplication for each section
+	@param csr_Rows:	row    array
+	@param csr_Cols:	column array
+	@param csr_Vals:	value  array
+	@param x:			vector to be multiplied with the matrix
+	@param result:		output
+	@param secSize:		section size
+	@param rows:		number of rows
+	@param nnzs:		number of nnzs
+	@param i:			x-coordinate of start point for the section
+	@param j:			y-coordinate of start point for the section
 */
 __device__ void merge_based_work(	unsigned int *csr_Rows, 
 									unsigned int *csr_Cols, 
@@ -257,8 +285,15 @@ __device__ void merge_based_work(	unsigned int *csr_Rows,
 		atomicAdd(result + i, rowTimesVector);
 }
 
-
-
+/*
+	brief: helper function for Coalesced Brutal Warp SpMV: perform matrix-vector multiplication
+	@param csr_Rows:	row    array
+	@param csr_Cols:	column array
+	@param csr_Vals:	value  array
+	@param x:			vector to be multiplied with the matrix
+	@param result:		output
+	@param rows:		number of rows
+*/
 __device__ void mat_vec_mul_coalesced_brutal_warp ( unsigned int *csr_Rows, 
 													unsigned int *csr_Cols, 
 													float *csr_Vals, 
@@ -300,7 +335,15 @@ __device__ void mat_vec_mul_coalesced_brutal_warp ( unsigned int *csr_Rows,
 	}
 }
 
-
+/*
+	brief: helper function for backward projection using no transposed matrix: perform transposed matrix-vector multiplication
+	@param csr_Rows:	row    array
+	@param csr_Cols:	column array
+	@param csr_Vals:	value  array
+	@param x:			vector to be multiplied with the matrix
+	@param result:		output
+	@param rows:		number of rows
+*/
 __device__ void trans_mat_vec_mul_warp(	unsigned int *csr_Rows, 
 										unsigned int *csr_Cols, 
 										float *csr_Vals, 

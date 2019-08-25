@@ -567,8 +567,7 @@ void partitionMatrix(unsigned long *csr_Rows, unsigned long nnzs, unsigned int r
     double nnzs_per_segment = ((double)nnzs / (double)device_numbers);
     for(unsigned int segment = 0; segment < device_numbers; segment++){
         for(; i <= rows; i++){
-            if(csr_Rows[i] > nnzs_per_segment * segment){
-                // printf("DEBUG: csr_Rows %lu > nnzs_per_segments %f * segments %u\n",  csr_Rows[i], nnzs_per_segment, segment);
+            if(csr_Rows[i] >= nnzs_per_segment * segment){
                 break;
             }
         }
@@ -578,6 +577,5 @@ void partitionMatrix(unsigned long *csr_Rows, unsigned long nnzs, unsigned int r
         segment_rows[segment] = segments[segment+1] - segments[segment];
         segment_nnzs[segment] = (unsigned int)(csr_Rows[segments[segment+1]] - csr_Rows[segments[segment]]);
         offsets[segment] = csr_Rows[segments[segment]];
-        // printf("Segment %u with rows: %u nnzs %u offset %lu\n", segment, segment_rows[segment], segment_nnzs[segment], offsets[segment]);
     }
 }

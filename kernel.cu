@@ -191,7 +191,7 @@ __device__ void merge_based_start(	unsigned int *csr_Rows,
 		j = nextj;
 
 		// find the first coordinate (i, j) that r[i + 1] > j - 1
-		if (csr_Rows[i + 1] > j - 1)
+		if (((int)csr_Rows[i + 1]) > j - 1)
 			righti = i;
 		else
 			lefti = i + 1;
@@ -222,8 +222,8 @@ __device__ void merge_based_start(	unsigned int *csr_Rows,
 
 /*
 	brief: matrix-vector multiplication for each section
-	@param i:			x-coordinate of start point
-	@param j:			y-coordinate of start point
+	@param i:			x-coordinate of start pounsigned int
+	@param j:			y-coordinate of start pounsigned int
 	other params:		same as SpMV_start
 */
 __device__ void merge_based_work(	unsigned int *csr_Rows, 

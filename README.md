@@ -1,16 +1,15 @@
 ﻿# MLEM - Maximum Liklihood Expectation Maximization for Small PET Devices
 
-This is the project for Mengdi' bachelor thesis for the topic: porting MLEM algorithm to heterogeneous systems. The main purpose is to develop a special version of MLEM algorithm working on multiple GPUs, while other parts of the work are done on CPU.
+This is the project for Mengdi' bachelor thesis of the topic: porting MLEM algorithm to heterogeneous systems. The main purpose is to develop a special version of MLEM algorithm working on multiple GPUs, while other parts of the work are done on CPU.
 
 Most of the pre-process work such as loading matrix, transporing matrix, partitioning matrix etc. are done on CPUs.
-
-Others are done on GPUs.
+Others are done on GPUs. Programming languages used are C / C++ / CUDA.
 
 ## Files
 - Makefile:     makefile
-- kernel.cu:    core functions for MLEM algorithm
-- kernel.cuh:   cuda header file for kernel.cu
-- main.cu:      program main body, including main() function
+- kernel.cu:    CUDA kernel functions for MLEM algorithm
+- kernel.cuh:   CUDA header file for kernel.cu
+- main.cu:      main program, including main() function
 - sptrans.h:    functions for matrix transposition
 
 ## other folders

@@ -36,5 +36,5 @@ argv[4]: number of GPUs to be used
 argv[5]: section size for forward  projection in NVIDIA merge-based SpMV
 argv[6]: section size for backward projection in NVIDIA merge-based SpMV
 argv[7]: whether to use transposed matrix    0: yes   1: no
-argv[8]: which SpMV to used     0: NVIDIA merge-based SpMV    1: Coalesced Brutal Warp SpMV
+argv[8]: which SpMV to use     0: NVIDIA merge-based SpMV    1: Coalesced Brutal Warp SpMV
 ```

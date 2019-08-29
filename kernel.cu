@@ -107,7 +107,7 @@ __global__ void calcBwProj_merge_based(	unsigned int *csr_Rows_Trans,
 
 
 /*
-	brief: calculate forward projection using Coalesced Brutal Warp SpMV, output saved in fwproj
+	brief: calculate forward projection using csr-vector SpMV, output saved in fwproj
 	@param csr_Rows:	row    array
 	@param csr_Cols:	column array
 	@param csr_Vals:	value  array
@@ -115,22 +115,22 @@ __global__ void calcBwProj_merge_based(	unsigned int *csr_Rows_Trans,
 	@param fwproj:		output array
 	@param rows:		number of rows
 */
-__global__ void calcFwProj_coalesced_brutal_warp (	unsigned int *csr_Rows, 
+__global__ void calcFwProj_csr_vector (	unsigned int *csr_Rows, 
 													unsigned int *csr_Cols, 
 													float *csr_Vals, 
 													float *f, 
 													float *fwproj, 
 													unsigned int rows){
-	mat_vec_mul_coalesced_brutal_warp (	csr_Rows, 
-										csr_Cols, 
-										csr_Vals, 
-										f, 
-										fwproj, 
-										rows);
+	mat_vec_mul_csr_vector (csr_Rows, 
+							csr_Cols, 
+							csr_Vals, 
+							f, 
+							fwproj, 
+							rows);
 }
 
 /*
-	brief: calculate backward projection using Coalesced Brutal Warp SpMV, output saved in bwproj
+	brief: calculate backward projection using csr-vector SpMV, output saved in bwproj
 	@param csr_Rows_Trans:	row    array of transposed matrix
 	@param csr_Cols_Trans:	column array of transposed matrix
 	@param csr_Vals_Trans:	value  array of transposed matrix
@@ -138,18 +138,18 @@ __global__ void calcFwProj_coalesced_brutal_warp (	unsigned int *csr_Rows,
 	@param bwproj:			output array
 	@param cols:			number of rows in transposed matrix (number of columns in original matrix)
 */
-__global__ void calcBwProj_coalesced_brutal_warp(	unsigned int *csr_Rows_Trans, 
-													unsigned int *csr_Cols_Trans, 
-													float *csr_Vals_Trans, 
-													float *correl, 
-													float *bwproj, 
-													unsigned int cols){
-	mat_vec_mul_coalesced_brutal_warp (	csr_Rows_Trans, 
-										csr_Cols_Trans, 
-										csr_Vals_Trans, 
-										correl, 
-										bwproj, 
-										cols);
+__global__ void calcBwProj_csr_vector(	unsigned int *csr_Rows_Trans, 
+										unsigned int *csr_Cols_Trans, 
+										float *csr_Vals_Trans, 
+										float *correl, 
+										float *bwproj, 
+										unsigned int cols){
+	mat_vec_mul_csr_vector (csr_Rows_Trans, 
+							csr_Cols_Trans, 
+							csr_Vals_Trans, 
+							correl, 
+							bwproj, 
+							cols);
 }
 
 /*
@@ -286,7 +286,7 @@ __device__ void merge_based_work(	unsigned int *csr_Rows,
 }
 
 /*
-	brief: helper function for Coalesced Brutal Warp SpMV: perform matrix-vector multiplication
+	brief: helper function for csr-vector SpMV: perform matrix-vector multiplication
 	@param csr_Rows:	row    array
 	@param csr_Cols:	column array
 	@param csr_Vals:	value  array
@@ -294,12 +294,12 @@ __device__ void merge_based_work(	unsigned int *csr_Rows,
 	@param result:		output
 	@param rows:		number of rows
 */
-__device__ void mat_vec_mul_coalesced_brutal_warp ( unsigned int *csr_Rows, 
-													unsigned int *csr_Cols, 
-													float *csr_Vals, 
-													float *x, 
-													float *result, 
-													unsigned int rows){
+__device__ void mat_vec_mul_csr_vector (	unsigned int *csr_Rows, 
+											unsigned int *csr_Cols, 
+											float *csr_Vals, 
+											float *x, 
+											float *result, 
+											unsigned int rows){
 	__shared__ float values[1024];
 
 	unsigned int WARP_SIZE = 32;

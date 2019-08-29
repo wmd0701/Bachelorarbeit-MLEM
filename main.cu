@@ -29,8 +29,8 @@ void help();
     @param argv[4]: number of GPUs to be used
     @param argv[5]: section size for forward  projection in NVIDIA merge-based SpMV
     @param argv[6]: section size for backward projection in NVIDIA merge-based SpMV
-    @param argv[7]: whether to use transposed matrix    0: yes   1: no
-    @param argv[8]: which SpMV to used     0: NVIDIA merge-based SpMV    1: Coalesced Brutal Warp SpMV
+    @param argv[7]: whether to use transposed matrix    0: yes                 1: no
+    @param argv[8]: which SpMV algorithm to use         0: merge-based SpMV    1: csr-vector SpMV
 
     use examples:
     ./test /scratch/pet/madpet2.p016.csr4.small /scratch/pet/Trues_Derenzo_GATE_rot_sm_200k.LMsino.small 500 2 4 4 0 0
@@ -159,7 +159,7 @@ int main(int argc, char **argv){
     @param nnzs:                number of nnzs
     @param iterations:          iteration times
     @param device_numbers:      number of GPUs applied
-    @param matrix_vector_mul:   which SpMV to be used    0: NVIDIA merge-based SpMV   1: Coalesced Brutal Warp SpMV
+    @param matrix_vector_mul:   which SpMV to use     0: merge-based SpMV   1: csr-vector SpMV
     @param secsize_fp:          section size for forward  projection (in merge-based SpMV)
     @param secsize_bp:          section size for backward projection (in merge-based SpMV)
     @param using_trans:         whether to use transposed matrix for backward projection     0: yes   1: no
@@ -342,7 +342,7 @@ void mlem(  unsigned long *csr_Rows,
                     segment_rows[i], 
                     segment_nnzs[i]);
             else
-                calcFwProj_coalesced_brutal_warp <<< gridsize_fwproj[i], blocksize >>> (
+                calcFwProj_csr_vector <<< gridsize_fwproj[i], blocksize >>> (
                     cuda_Rows[i], 
                     cuda_Cols[i], 
                     cuda_Vals[i], 
@@ -387,7 +387,7 @@ void mlem(  unsigned long *csr_Rows,
                         segment_rows_trans[i], 
                         segment_nnzs_trans[i]);
                 else
-                    calcBwProj_coalesced_brutal_warp <<< gridsize_bwproj[i], blocksize >>> (
+                    calcBwProj_csr_vector <<< gridsize_bwproj[i], blocksize >>> (
                         cuda_Rows_Trans[i], 
                         cuda_Cols_Trans[i], 
                         cuda_Vals_Trans[i], 
@@ -620,6 +620,6 @@ void help(){
     printf("argv[4]: number of GPUs to be used\n");
     printf("argv[5]: section size for forward  projection (merge-based SpMV)\n");
     printf("argv[6]: section size for backward projection (merge-based SpMV)\n");
-    printf("argv[7]: backward projection uses transposed matrix?     0: yes  1: no\n");
-    printf("argv[8]: which SpMV to be used?     0: NVIDIA merge-based SpMV     1: Coalesced Brutal Warp SpMV\n\n");
+    printf("argv[7]: BP uses transposed matrix?      0: yes                1: no\n");
+    printf("argv[8]: which SpMV algorithm to use?    0: merge-based SpMV   1: csr-vector SpMV\n\n");
 }

@@ -1,9 +1,8 @@
-﻿# MLEM - Maximum Liklihood Expectation Maximization for Small PET Devices
+# Maximum Liklihood Expectation Maximization for Small PET Devices
 
-This is the project for Mengdi' bachelor thesis of the topic: porting MLEM algorithm for heterogeneous systems. The main purpose is to develop a special version of MLEM algorithm working on multiple GPUs, while other parts of the work are done on CPU.
+This is the project repo for Mengdi's bachelor thesis of the topic: porting MLEM algorithm for heterogeneous systems. The main purpose is to develop a special version of MLEM algorithm working on multiple GPUs, while other parts of the work are done on CPU: most of the pre-process work such as loading matrix, transporing matrix, partitioning matrix etc. are done on CPUs; others are done on GPUs. Programming languages used are C / C++ / CUDA.
 
-Most of the pre-process work such as loading matrix, transporing matrix, partitioning matrix etc. are done on CPUs.
-Others are done on GPUs. Programming languages used are C / C++ / CUDA.
+**Important:** The original repo on [TUM LRZ GitLab](https://gitlab.lrz.de/ga92nam/mlem.git) and this repo on GitHub is just a copy. After Mengdi's registration from TUM, his LRT GitLab account becomes invalid and access to original repo is hence lost.
 
 ## Files
 - Makefile:     makefile
